@@ -301,10 +301,28 @@ sending an emoji hit it.
 
 ### How do I query a document with namespaces?
 
-Prefixes in an expression are not resolved against the document's
-bindings: `//x:item` selects every `item` regardless of namespace.
-Filter explicitly with
-`//*[namespace-uri()='urn:example' and local-name()='item']`.
+**This changes at oxml 0.0.4, and the tools do not expose the fix
+yet.**
+
+In the version this server currently links, a prefix in an expression
+is not resolved: `//x:item` selects every `item` regardless of
+namespace. Tell the model to filter on the URI instead:
+
+```
+//*[namespace-uri()='urn:example' and local-name()='item']
+```
+
+From oxml 0.0.4 a prefixed name test resolves against bindings supplied
+with the query, an unbound prefix is a compile error, and an
+unprefixed name test matches only nodes in no namespace.
+
+Exposing that needs an optional `namespaces` argument on `xml_query`,
+which is not implemented. The `namespace-uri()` form works in both
+versions.
+
+Note that `xml_inspect` does not report namespaces either, so a model
+cannot currently discover which URIs a document uses without querying
+for them. Both are worth fixing together.
 
 ### What happens if the model sends invalid JSON?
 
