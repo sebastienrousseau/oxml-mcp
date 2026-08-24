@@ -27,7 +27,7 @@
 - [Protocol](#protocol)
 - [Errors](#errors)
 - [Design](#design)
-- [Capabilities in 0.0.4](#capabilities-in-004)
+- [Capabilities in 0.0.5](#capabilities-in-005)
 - [Examples](#examples)
 - [When not to use oxml-mcp](#when-not-to-use-oxml-mcp)
 - [FAQ](#faq)
@@ -224,7 +224,7 @@ file on the machine.
 untrusted JSON arriving on stdin, a dependency tree is a liability, and
 this one has none beyond `oxml` and `xmlschema`.
 
-## Capabilities in 0.0.4
+## Capabilities in 0.0.5
 
 - Four tools: query, inspect, check, validate
 - XPath 1.0: ten axes, 25 functions, all four value types
