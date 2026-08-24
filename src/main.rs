@@ -123,16 +123,16 @@ fn initialize(id: &Json) -> String {
 fn tool(
     name: &str,
     description: &str,
-    props: &[(&str, &str)],
+    props: &[(&str, &str, &str)],
     required: &[&str],
 ) -> Json {
     let properties: Vec<(&str, Json)> = props
         .iter()
-        .map(|(n, d)| {
+        .map(|(n, ty, d)| {
             (
                 *n,
                 Json::object(vec![
-                    ("type", Json::str("string")),
+                    ("type", Json::str(*ty)),
                     ("description", Json::str(*d)),
                 ]),
             )
@@ -169,8 +169,18 @@ fn tools_list(id: &Json) -> String {
                      document and return the matching values. Use this \
                      instead of reading a large document into context.",
                     &[
-                        ("xml", "The XML document"),
-                        ("xpath", "An XPath 1.0 expression"),
+                        ("xml", "string", "The XML document"),
+                        ("xpath", "string", "An XPath 1.0 expression"),
+                        (
+                            "namespaces",
+                            "object",
+                            "Namespace prefixes used in the expression, \
+                             mapping prefix to URI, e.g. \
+                             {\"m\": \"urn:example\"}. A prefix must be \
+                             bound here; it is not read from the \
+                             document. Call xml_inspect to see which \
+                             namespaces a document uses.",
+                        ),
                     ],
                     &["xml", "xpath"],
                 ),
@@ -179,22 +189,26 @@ fn tools_list(id: &Json) -> String {
                     "Validate an XML document against an XML Schema \
                      (XSD). Returns every violation with the path to \
                      the element it concerns.",
-                    &[("xml", "The XML document"), ("xsd", "The XML Schema")],
+                    &[
+                        ("xml", "string", "The XML document"),
+                        ("xsd", "string", "The XML Schema"),
+                    ],
                     &["xml", "xsd"],
                 ),
                 tool(
                     "xml_check",
                     "Check whether a document is well-formed, and \
                      report the line and column if it is not.",
-                    &[("xml", "The XML document")],
+                    &[("xml", "string", "The XML document")],
                     &["xml"],
                 ),
                 tool(
                     "xml_inspect",
                     "Summarise a document's structure: element counts, \
-                     depth, and the element names present. Use this to \
-                     understand a document's shape before querying it.",
-                    &[("xml", "The XML document")],
+                     depth, the element names present, and the \
+                     namespaces it uses. Use this to understand a \
+                     document's shape before querying it.",
+                    &[("xml", "string", "The XML document")],
                     &["xml"],
                 ),
             ]),
@@ -226,7 +240,10 @@ fn tools_call(id: &Json, request: &Json) -> String {
     let arg = |k: &str| args.get(k).and_then(Json::as_str).unwrap_or("");
 
     let result = match name {
-        "xml_query" => run_query(arg("xml"), arg("xpath")),
+        "xml_query" => {
+            let namespaces = namespace_bindings(request);
+            run_query(arg("xml"), arg("xpath"), &namespaces)
+        }
         "xml_validate" => run_validate(arg("xml"), arg("xsd")),
         "xml_check" => run_check(arg("xml")),
         "xml_inspect" => run_inspect(arg("xml")),
@@ -257,10 +274,60 @@ fn parse_doc(xml: &str) -> Result<oxml::Document, String> {
     })
 }
 
-fn run_query(xml: &str, xpath: &str) -> Result<String, String> {
+/// The `namespaces` argument of a `tools/call` request.
+///
+/// A JSON object mapping prefix to URI. Absent is the same as empty,
+/// so a request that needs no namespaces is unchanged.
+fn namespace_bindings(request: &Json) -> Vec<(String, String)> {
+    let Some(Json::Object(object)) = request
+        .get("params")
+        .and_then(|p| p.get("arguments"))
+        .and_then(|a| a.get("namespaces"))
+    else {
+        return Vec::new();
+    };
+    object
+        .iter()
+        .filter_map(|(prefix, value)| {
+            // `xml` is bound by the specification; rebinding it is not
+            // something a caller may do, so it is ignored rather than
+            // failing a request over it.
+            if prefix == "xml" {
+                return None;
+            }
+            Some((prefix.clone(), value.as_str()?.to_owned()))
+        })
+        .collect()
+}
+
+fn run_query(
+    xml: &str,
+    xpath: &str,
+    namespaces: &[(String, String)],
+) -> Result<String, String> {
     let doc = parse_doc(xml)?;
-    let compiled = oxml::XPath::compile(xpath)
-        .map_err(|e| format!("The XPath expression is invalid: {e}"))?;
+    let bindings: Vec<(&str, &str)> = namespaces
+        .iter()
+        .map(|(prefix, uri)| (prefix.as_str(), uri.as_str()))
+        .collect();
+    let compiled = oxml::XPath::compile_with_namespaces(xpath, &bindings)
+        .map_err(|e| {
+            // The library names a Rust function, which is no use to a
+            // model. Say what it can put in the request.
+            if e.message.contains("unbound namespace prefix") {
+                let prefix =
+                    e.message.split('`').nth(1).unwrap_or("PREFIX").to_owned();
+                format!(
+                    "The XPath expression uses the namespace prefix \
+                     `{prefix}`, which is not bound. Pass it in the \
+                     `namespaces` argument, for example \
+                     {{\"{prefix}\": \"urn:example\"}}. Call `xml_inspect` \
+                     to see which namespaces the document uses."
+                )
+            } else {
+                format!("The XPath expression is invalid: {e}")
+            }
+        })?;
     let value = compiled.evaluate(&doc);
 
     let Some(nodes) = value.nodes() else {
@@ -308,11 +375,15 @@ fn run_inspect(xml: &str) -> Result<String, String> {
     use std::collections::BTreeMap;
     let doc = parse_doc(xml)?;
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut namespaces: BTreeMap<String, usize> = BTreeMap::new();
     let mut depth_max = 0usize;
 
     for id in doc.descendants() {
         if let Some(name) = doc.element_name(id) {
             *counts.entry(name.local.clone()).or_default() += 1;
+            if let Some(uri) = &name.namespace {
+                *namespaces.entry(uri.clone()).or_default() += 1;
+            }
             let mut d = 0usize;
             let mut cur = Some(id);
             while let Some(n) = cur {
@@ -333,6 +404,21 @@ fn run_inspect(xml: &str) -> Result<String, String> {
     );
     for (name, n) in counts {
         let _ = writeln!(out, "  {name}: {n}");
+    }
+    // A model cannot write a namespace-aware query against namespaces
+    // it cannot see, and from oxml 0.0.4 an unbound prefix is an error
+    // rather than a silent match. Reporting them here is what makes the
+    // `namespaces` argument usable.
+    if namespaces.is_empty() {
+        let _ = writeln!(out, "Namespaces: none");
+    } else {
+        let _ = writeln!(
+            out,
+            "Namespaces (pass these to xml_query as `namespaces`):"
+        );
+        for (uri, n) in namespaces {
+            let _ = writeln!(out, "  {uri}: {n} element(s)");
+        }
     }
     Ok(out)
 }
@@ -610,11 +696,101 @@ mod tests {
     fn control_characters_in_a_document_survive_the_round_trip() {
         // An unescaped control character would corrupt the whole line,
         // and this is the layer that decides.
+        //
+        // U+0001 is not a legal XML character, so the document is
+        // rejected -- correctly, and that is not what this test is
+        // about. What matters is that the *reply* comes back as one
+        // well-formed line with nothing raw in it, whichever way the
+        // parse went.
         let r = tool_call(
             "xml_check",
             vec![("xml", Json::str("<a>\u{1}\u{7}</a>"))],
         );
+        let line = r.to_json();
+        assert!(!line.contains('\n'), "reply must be one line");
+        assert!(
+            !line.chars().any(char::is_control),
+            "no raw control character may reach the transport: {line:?}"
+        );
+        assert!(crate::json::parse(&line).is_ok(), "reply must parse");
+
+        // A tab *is* legal, and must survive escaped rather than
+        // splitting or corrupting the line.
+        let r = tool_call("xml_check", vec![("xml", Json::str("<a>\t</a>"))]);
         assert!(!is_error(&r), "{}", r.to_json());
+    }
+
+    #[test]
+    fn a_bound_prefix_selects_only_that_namespace() {
+        // From oxml 0.0.4 a prefix resolves against bindings supplied
+        // with the query, not against the document.
+        let xml =
+            r#"<r xmlns:m="urn:u"><m:item>ns</m:item><item>plain</item></r>"#;
+        let r = tool_call(
+            "xml_query",
+            vec![
+                ("xml", Json::str(xml)),
+                ("xpath", Json::str("//m:item")),
+                ("namespaces", Json::object(vec![("m", Json::str("urn:u"))])),
+            ],
+        );
+        assert!(!is_error(&r), "{}", r.to_json());
+        assert!(r.to_json().contains("ns"), "{}", r.to_json());
+    }
+
+    #[test]
+    fn an_unbound_prefix_says_what_to_do_about_it() {
+        // The library's message names a Rust function, which is no use
+        // to a model. The reply must name the argument to pass and the
+        // tool that reveals what to put in it.
+        let xml = r#"<r xmlns:m="urn:u"><m:item>ns</m:item></r>"#;
+        let r = tool_call(
+            "xml_query",
+            vec![("xml", Json::str(xml)), ("xpath", Json::str("//m:item"))],
+        );
+        assert!(is_error(&r));
+        let text = r.to_json();
+        assert!(text.contains("namespaces"), "{text}");
+        assert!(text.contains("xml_inspect"), "{text}");
+    }
+
+    #[test]
+    fn inspect_reports_the_namespaces_a_document_uses() {
+        // A model cannot write a namespace-aware query against
+        // namespaces it cannot see.
+        let xml = r#"<r xmlns:m="urn:u"><m:item>ns</m:item></r>"#;
+        let r = tool_call("xml_inspect", vec![("xml", Json::str(xml))]);
+        assert!(r.to_json().contains("urn:u"), "{}", r.to_json());
+
+        let plain = tool_call(
+            "xml_inspect",
+            vec![("xml", Json::str("<r><item/></r>"))],
+        );
+        assert!(
+            plain.to_json().contains("Namespaces: none"),
+            "{}",
+            plain.to_json()
+        );
+    }
+
+    #[test]
+    fn the_xml_prefix_may_not_be_rebound() {
+        // Bound by the specification; a binding that tries is ignored
+        // rather than failing the request.
+        let xml = r#"<r><a xml:lang="en">x</a></r>"#;
+        let r = tool_call(
+            "xml_query",
+            vec![
+                ("xml", Json::str(xml)),
+                ("xpath", Json::str("//@xml:lang")),
+                (
+                    "namespaces",
+                    Json::object(vec![("xml", Json::str("urn:wrong"))]),
+                ),
+            ],
+        );
+        assert!(!is_error(&r), "{}", r.to_json());
+        assert!(r.to_json().contains("en"), "{}", r.to_json());
     }
 
     #[test]

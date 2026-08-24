@@ -43,4 +43,20 @@ call "an escaped surrogate pair is accepted" \
   '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<r><t>😀</t></r>","xpath":"//t"}}}' \
   '"isError":false'
 
+
+# Namespaces. A prefix resolves against bindings sent with the query,
+# not against the document, so an unbound one is an error rather than a
+# silent match on the local part.
+call "xml_inspect reports the namespaces a document uses" \
+  '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"xml_inspect","arguments":{"xml":"<r xmlns:m=\"urn:u\"><m:item>ns</m:item></r>"}}}' \
+  'urn:u'
+
+call "a bound prefix selects only that namespace" \
+  '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<r xmlns:m=\"urn:u\"><m:item>ns</m:item><item>plain</item></r>","xpath":"//m:item","namespaces":{"m":"urn:u"}}}}' \
+  '"text":"ns"'
+
+call "an unbound prefix says which argument to use" \
+  '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<r xmlns:m=\"urn:u\"><m:item>ns</m:item></r>","xpath":"//m:item"}}}' \
+  'xml_inspect'
+
 finish

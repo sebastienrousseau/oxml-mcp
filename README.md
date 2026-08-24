@@ -103,6 +103,7 @@ Evaluate an XPath 1.0 expression and return the matching values.
 |---|---|---|
 | `xml` | string | The document |
 | `xpath` | string | An XPath 1.0 expression |
+| `namespaces` | object | Optional. Prefix-to-URI bindings for the expression |
 
 ```json
 {"name":"xml_query","arguments":{"xml":"<r><t>Dune</t><t>Germinal</t></r>","xpath":"//t"}}
@@ -118,8 +119,8 @@ return that value directly, so `count(//t)` gives `2`.
 
 ### `xml_inspect`
 
-Summarise a document's shape: root element, maximum depth, and every
-element name with its count.
+Summarise a document's shape: root element, maximum depth, every
+element name with its count, and the namespaces it uses.
 
 ```json
 {"name":"xml_inspect","arguments":{"xml":"<r><t>x</t></r>"}}
@@ -301,28 +302,29 @@ sending an emoji hit it.
 
 ### How do I query a document with namespaces?
 
-**This changes at oxml 0.0.4, and the tools do not expose the fix
-yet.**
+Pass them with the query:
 
-In the version this server currently links, a prefix in an expression
-is not resolved: `//x:item` selects every `item` regardless of
-namespace. Tell the model to filter on the URI instead:
-
-```
-//*[namespace-uri()='urn:example' and local-name()='item']
+```json
+{"name":"xml_query","arguments":{
+  "xml":"…","xpath":"//m:item","namespaces":{"m":"urn:example"}}}
 ```
 
-From oxml 0.0.4 a prefixed name test resolves against bindings supplied
-with the query, an unbound prefix is a compile error, and an
-unprefixed name test matches only nodes in no namespace.
+A prefix resolves against these bindings, **not** against the document,
+so the same expression works across documents that spell the prefix
+differently — only the URI has to match. An unbound prefix is an error
+that names the argument to pass and points at `xml_inspect`.
 
-Exposing that needs an optional `namespaces` argument on `xml_query`,
-which is not implemented. The `namespace-uri()` form works in both
-versions.
+`xml_inspect` reports the namespaces a document uses, which is what
+makes the argument usable: a model cannot bind a URI it cannot see.
 
-Note that `xml_inspect` does not report namespaces either, so a model
-cannot currently discover which URIs a document uses without querying
-for them. Both are worth fixing together.
+```
+Namespaces (pass these to xml_query as `namespaces`):
+  urn:example: 12 element(s)
+```
+
+An **unprefixed** name test matches only nodes in no namespace, which
+is what XPath 1.0 specifies. `namespace-uri()` still works and needs no
+binding.
 
 ### What happens if the model sends invalid JSON?
 
