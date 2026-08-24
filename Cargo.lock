@@ -4,13 +4,13 @@ version = 4
 
 [[package]]
 name = "oxml"
-version = "0.0.3"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65e194ab3f2b8896f5925e2f2770db4fd40a0bfc701d7fc9baa04cd72c3cf795"
+checksum = "092abfc68037ba9fb27484a0418bf1b8ebfe56ab8f8fb3dd6464595ed6a38902"
 
 [[package]]
 name = "oxml-mcp"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxml",
  "xmlschema",
@@ -18,9 +18,9 @@ dependencies = [
 
 [[package]]
 name = "xmlschema"
-version = "0.0.3"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31e3e916376d538564344240308e104360c1f489eb54ff41619b61417f6f16d3"
+checksum = "47453683d9a72bbbcbfa0f4f218ce0b6d697d1e76d38716f25f91d9d1a05829c"
 dependencies = [
  "oxml",
 ]
