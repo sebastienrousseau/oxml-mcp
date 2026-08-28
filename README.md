@@ -13,6 +13,7 @@
   <a href="https://github.com/sebastienrousseau/oxml-mcp/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/oxml-mcp/ci.yml?style=for-the-badge&logo=github" alt="Build" /></a>
   <a href="https://crates.io/crates/oxml-mcp"><img src="https://img.shields.io/crates/v/oxml-mcp.svg?style=for-the-badge&color=fc8d62&logo=rust" alt="Crates.io" /></a>
   <a href="https://docs.rs/oxml-mcp"><img src="https://img.shields.io/badge/docs.rs-oxml--mcp-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" alt="Docs.rs" /></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/oxml-mcp"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/oxml-mcp?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
 </p>
 
 ---
