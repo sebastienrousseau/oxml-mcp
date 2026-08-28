@@ -19,20 +19,36 @@
 
 ## Contents
 
-- [Why a model wants this](#why-a-model-wants-this)
-- [Install](#install)
-- [Configure](#configure)
-- [The oxml ecosystem](#the-oxml-ecosystem)
-- [Tools](#tools)
-- [Protocol](#protocol)
-- [Errors](#errors)
-- [Design](#design)
-- [Capabilities in 0.0.6](#capabilities-in-006)
-- [Examples](#examples)
+**Getting started**
+
+- [Why a model wants this](#why-a-model-wants-this) — the problem an XML tool solves for an LLM
+- [Install](#install) — Cargo, from source
+- [Quick Start](#quick-start) — one line, no client required
+- [Configure](#configure) — Claude Desktop, and any MCP client
+
+**The oxml ecosystem**
+
+- [The oxml ecosystem](#the-oxml-ecosystem) — six crates, one version
+
+**Reference**
+
+- [Tools](#tools) — `xml_query`, `xml_validate`, `xml_check`, `xml_inspect`
+- [Protocol](#protocol) — JSON-RPC 2.0 over stdio, MCP `2024-11-05`
+- [Errors](#errors) — the two kinds, and which is which
+- [Design](#design) — why four tools, and why documents are strings
+- [Capabilities in 0.0.6](#capabilities-in-006) — release inventory
+- [Ecosystem comparison](#ecosystem-comparison) — how this compares to the alternatives
+- [Benchmarks](#benchmarks) — latency per request, measured in pairs
+
+**Practical**
+
+- [Examples](#examples) — a full session, and every error path
 - [When not to use oxml-mcp](#when-not-to-use-oxml-mcp)
 - [FAQ](#faq)
 - [Development](#development)
 - [Security](#security)
+- [Documentation](#documentation)
+- [Acknowledgements](#acknowledgements)
 - [License](#license)
 
 ---
@@ -55,6 +71,23 @@ in a document it can see will approximate. `xml_query` with
 ```bash
 cargo install oxml-mcp
 ```
+
+## Quick Start
+
+The server speaks JSON-RPC 2.0 over stdio, so one line is enough to see
+it work — no client required:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<library><book><title>Dune</title></book></library>","xpath":"//title"}}}' \
+  | oxml-mcp
+```
+
+```json
+{"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"Dune","type":"text"}],"isError":false}}
+```
+
+For day-to-day use you want a client to do that for you — see
+[Configure](#configure).
 
 ## Configure
 
@@ -236,6 +269,22 @@ this one has none beyond `oxml` and `xmlschema`.
 
 **Not yet:** resources, prompts, streaming, documents by path or URI.
 
+## Ecosystem comparison
+
+The alternatives are ways of getting XML in front of a model rather
+than competing servers:
+
+| Approach | Document size | Precision | Reaches the network |
+|---|---|---|---|
+| **`oxml-mcp`** | bounded by the tool call, not the context window | an XPath expression with an exact answer | **never** |
+| Paste into the context | must fit, and costs tokens every turn | the model pattern-matches by eye | no |
+| A filesystem or shell server | unbounded | whatever `grep` gives you | depends on the server |
+| A generic HTTP fetch server | unbounded | none | **yes**, by design |
+
+The last row is the one worth pausing on. A server that fetches is a
+server that can be pointed at your internal network by a document it
+was asked to read. This one has no code that opens a socket.
+
 ## Benchmarks
 
 ```bash
@@ -354,10 +403,28 @@ client's problem, the second is the model's. See
 ## Development
 
 ```bash
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
-./examples/run-all.sh
+./scripts/gate.sh
 ```
+
+That runs everything CI runs, in the order that fails fastest: format,
+clippy, tests, rustdoc, the `#![forbid(unsafe_code)]` check, the
+examples, the 95% coverage floor and an MSRV build. It pins the
+toolchain rather than trusting `rust-toolchain.toml`, because a
+`RUSTUP_TOOLCHAIN` in the environment silently overrides that file and
+a lint that exists in one release and not another then makes a green
+local run and a red CI one.
+
+The individual steps, if you want them one at a time:
+
+```bash
+cargo test --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+cargo bench --bench protocol
+OXML_MCP="$PWD/target/release/oxml-mcp" ./examples/run-all.sh
+```
+
+CI runs the same set on Linux, macOS and Windows.
 
 ## Security
 
@@ -371,6 +438,31 @@ hostile — the document because a model was asked to look at something
 from the internet, and the JSON because it is the program's entire
 input. See
 <https://github.com/sebastienrousseau/oxml/blob/main/doc/SECURITY-MODEL.md>.
+
+## Documentation
+
+- [API documentation](https://docs.rs/oxml-mcp)
+- [BENCHMARKS.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/BENCHMARKS.md)
+- [PROTOCOL.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/PROTOCOL.md)
+- [TOOL-DESIGN.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/TOOL-DESIGN.md)
+- [SECURITY-MODEL.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/SECURITY-MODEL.md)
+- [TESTING.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/TESTING.md)
+- [CHANGELOG.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/CHANGELOG.md)
+- [CONTRIBUTING.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/CONTRIBUTING.md)
+- [SECURITY.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/SECURITY.md)
+
+## Acknowledgements
+
+`oxml-mcp` exists because of work that came before it:
+
+- **[Anthropic](https://modelcontextprotocol.io/)** — for the Model
+  Context Protocol specification this server implements.
+- **[lxml](https://lxml.de/)** and
+  **[libxml2](https://gitlab.gnome.org/GNOME/libxml2)** — the reference
+  for what an XML toolkit should offer, and decades of hard-won
+  correctness.
+- **[W3C](https://www.w3.org/TR/1999/REC-xpath-19991116/)** — for the
+  XPath 1.0 specification that `xml_query` follows.
 
 ## License
 
