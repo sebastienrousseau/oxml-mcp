@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A library target.** The protocol handling that filled
+  `src/main.rs` now lives in `src/lib.rs`; the binary supplies stdin
+  and stdout and nothing else. `serve` is generic over its two ends,
+  so a test or a benchmark can drive the real loop through an
+  in-memory pipe.
+
+- `benches/protocol.rs`, measuring latency per request. It exists to
+  answer one question -- how much of a tool call is this crate rather
+  than `oxml` -- and the answer is roughly 10-25% on a 200 KB payload,
+  a few microseconds on a small one.
+
+  The first version of that comparison timed the two in separate loops
+  and reported `xml_validate` as *faster than the parse it contains*.
+  Consecutive runs on a busy machine disagree by more than the effect,
+  so the measurement is now paired: both alternate inside one loop.
+
+- `tests/serve.rs`, covering what a real pipe will not produce on
+  demand -- a writer that starts failing mid-session, input that stops
+  mid-line, a malformed line followed by a good one.
+
+- An **Examples** job in CI. README.md and doc/TESTING.md both said the
+  examples ran there; nothing ran them.
+
+### Fixed
+
+- doc/TESTING.md quoted 48 tests and oxml's conformance as 2,394 of
+  2,557. It is 57 and 2,557 of 2,557.
+
 ## [0.0.6] - 2026-08-26
 
 ### Changed

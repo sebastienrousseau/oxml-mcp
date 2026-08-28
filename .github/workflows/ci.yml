@@ -35,6 +35,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
 
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # README.md and doc/TESTING.md both say the examples run in CI.
+      # Until 0.0.7 nothing ran them -- the same gap that let two of
+      # the sibling CLI's assertions fail unnoticed for a release.
+      - run: cargo build --release
+      - name: Run every example, which asserts its own replies
+        run: OXML_MCP="$PWD/target/release/oxml-mcp" ./examples/run-all.sh
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

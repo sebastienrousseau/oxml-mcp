@@ -13,6 +13,10 @@ keywords = ["xml", "xpath", "mcp", "llm", "xsd"]
 categories = ["command-line-utilities", "parser-implementations"]
 authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
 
+[lib]
+name = "oxml_mcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "oxml-mcp"
 path = "src/main.rs"
@@ -20,6 +24,11 @@ path = "src/main.rs"
 [dependencies]
 oxml = "0.0.6"
 xmlschema = "0.0.6"
+
+[[bench]]
+name = "protocol"
+path = "benches/protocol.rs"
+harness = false
 
 [lints.rust]
 missing_docs = "warn"
