@@ -236,6 +236,18 @@ this one has none beyond `oxml` and `xmlschema`.
 
 **Not yet:** resources, prompts, streaming, documents by path or URI.
 
+## Benchmarks
+
+```bash
+cargo bench --bench protocol
+```
+
+Latency per request, since an MCP client sends one and waits. The
+JSON-RPC layer adds roughly 10–25% over the bare parse on a 200 KB
+payload and is a few microseconds on a small one. See
+[`doc/BENCHMARKS.md`](doc/BENCHMARKS.md), which also explains why that
+comparison has to be measured in pairs.
+
 ## Examples
 
 [`examples/`](examples/) drives the real binary over stdio and asserts
