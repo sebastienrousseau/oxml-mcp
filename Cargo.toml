@@ -26,6 +26,10 @@ oxml = "0.0.7"
 oxml-json = "0.0.8"
 xmlschema = "0.0.7"
 
+[[example]]
+name = "serve_a_session"
+path = "examples/serve_a_session.rs"
+
 [[bench]]
 name = "protocol"
 path = "benches/protocol.rs"
