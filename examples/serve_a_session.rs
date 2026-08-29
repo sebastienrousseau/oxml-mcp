@@ -19,12 +19,18 @@ use std::io::Cursor;
 fn main() {
     // `handle_line` dispatches a single message. A request carries an
     // id and draws a reply; a notification has none and draws silence.
-    let reply = oxml_mcp::handle_line(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#)
-        .expect("a request with an id must be answered");
+    let reply = oxml_mcp::handle_line(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+    )
+    .expect("a request with an id must be answered");
     println!("{reply}");
-    assert!(reply.contains("\"id\":1"), "the reply echoes the request id");
+    assert!(
+        reply.contains("\"id\":1"),
+        "the reply echoes the request id"
+    );
 
-    let silence = oxml_mcp::handle_line(r#"{"jsonrpc":"2.0","method":"initialized"}"#);
+    let silence =
+        oxml_mcp::handle_line(r#"{"jsonrpc":"2.0","method":"initialized"}"#);
     assert!(
         silence.is_none(),
         "a notification has no id, so it draws no reply"
