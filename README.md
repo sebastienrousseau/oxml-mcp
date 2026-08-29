@@ -38,7 +38,7 @@
 - [Protocol](#protocol) — JSON-RPC 2.0 over stdio, MCP `2024-11-05`
 - [Errors](#errors) — the two kinds, and which is which
 - [Design](#design) — why four tools, and why documents are strings
-- [Capabilities in 0.0.7](#capabilities-in-007) — release inventory
+- [Capabilities in 0.0.8](#capabilities-in-008) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — how this compares to the alternatives
 - [Benchmarks](#benchmarks) — latency per request, measured in pairs
 
@@ -259,7 +259,7 @@ file on the machine.
 untrusted JSON arriving on stdin, a dependency tree is a liability, and
 this one has none beyond `oxml` and `xmlschema`.
 
-## Capabilities in 0.0.7
+## Capabilities in 0.0.8
 
 - Four tools: query, inspect, check, validate
 - XPath 1.0: ten axes, 25 functions, all four value types

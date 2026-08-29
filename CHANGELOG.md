@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.8] - 2026-08-29
+
+### Fixed
+
+- **Malformed replies on large numbers.** A numeric literal too large
+  for an `f64` became infinity and was serialised as a bare `inf`
+  token, which is not JSON: a client parsing the reply failed on it.
+  Out-of-range numbers are now rejected with an error. The fix came
+  with the move to `oxml-json`, whose fuzz target asserts the round
+  trip that would have caught it.
+
+- **`examples/run-all.sh` named the examples it ran**, so an example
+  added later was never run. These examples assert rather than print,
+  which made an unrun one a check that had silently stopped checking.
+  It now finds them, and an empty result is an error rather than a
+  quiet pass.
+
+### Changed
+
+- JSON moved out to `oxml-json`, so the MCP server and the language
+  server share one implementation rather than two that could disagree.
+
+### Security
+
+- A fuzz target over the JSON-RPC handler, every action pinned by
+  commit SHA, `cargo audit` and `cargo deny` actually running (the
+  badge claimed they did; they did not), branch coverage gated, CodeQL
+  added, and the DCO enforced.
+
 ## [0.0.7] - 2026-08-28
 
 ### Changed
