@@ -56,9 +56,35 @@ arguments in the protocol-error category and reserves `isError` for a
 tool that ran and could not do the job. The assertion was written the
 other way round and the server was right.
 
+## Fuzzing
+
+```bash
+cargo +nightly fuzz run handle_line
+```
+
+`handle_line` covers the JSON-RPC handler, which is fed whatever a client sends through a hand-written JSON parser.
+
+4,136,133 executions have run without a crash. CI runs the target for
+300 seconds on every pull request, seeded from the tracked files in
+`fuzz/seeds/` — the grown corpus is build output and is not tracked,
+so a run starts from the same place every time rather than from
+whatever a previous run happened to discover. A crash input is
+uploaded as a build artefact, because knowing only that something
+broke is not much use.
+
+## Coverage
+
+Line coverage is gated in CI at a 95% floor. **Branch coverage is
+86.6%**, gated at 80.
+
+Branch coverage needs a nightly toolchain: `cargo llvm-cov --branch`
+does not build on the version this project pins. It was recorded as
+unmeasurable for a while on the strength of that one failure, which
+was a conclusion drawn from a single attempt.
+
 ## What is not tested here
 
 The parser, XPath and the conformance suite belong to `oxml` and are
-tested there — 2,557 of 2,557 decided W3C conformance tests, zero
+tested there (this crate fuzzes its own surface — see above) — 2,557 of 2,557 decided W3C conformance tests, zero
 panics, fuzzing, Miri and property tests. See
 <https://github.com/sebastienrousseau/oxml/blob/main/doc/TESTING.md>.
