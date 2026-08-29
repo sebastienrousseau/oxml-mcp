@@ -1,6 +1,6 @@
 [package]
 name = "oxml-mcp"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 rust-version = "1.86.0"
 license = "MIT OR Apache-2.0"
@@ -22,9 +22,9 @@ name = "oxml-mcp"
 path = "src/main.rs"
 
 [dependencies]
-oxml = "0.0.7"
+oxml = "0.0.8"
 oxml-json = "0.0.8"
-xmlschema = "0.0.7"
+xmlschema = "0.0.8"
 
 [[example]]
 name = "serve_a_session"
