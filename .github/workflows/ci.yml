@@ -53,6 +53,24 @@ jobs:
       - name: Run every example, which asserts its own replies
         run: OXML_MCP="$PWD/target/release/oxml-mcp" ./examples/run-all.sh
 
+  example-coverage:
+    name: Examples cover the public API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # main
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # The README says the examples cover the public API. That claim
+      # decays silently, so it is measured rather than trusted: every
+      # `pub fn` must be *executed* by an example, not merely mentioned.
+      - run: python3 scripts/check-example-coverage.py
+
   fuzz:
     name: Fuzz (handle_line)
     runs-on: ubuntu-latest
