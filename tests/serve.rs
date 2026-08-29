@@ -115,3 +115,26 @@ fn malformed_input_does_not_end_the_session() {
     assert_eq!(text.lines().count(), 2, "got {text}");
     assert!(text.lines().next().expect("a line").contains("error"));
 }
+
+#[test]
+fn a_number_too_large_for_f64_draws_an_error_not_malformed_output() {
+    // Shipped broken in 0.0.7. `1e999` is grammatically valid JSON;
+    // the parser turned it into infinity, and serialising infinity
+    // produced a reply that was not valid JSON at all. A client
+    // sending a large id got back something it could not parse, and
+    // the failure looked like a transport fault rather than a bad
+    // request.
+    //
+    // Found by fuzzing after the parser moved to `oxml-json`, where a
+    // round-trip assertion was added that neither copy had.
+    let line =
+        r#"{"jsonrpc":"2.0","id":1e999,"method":"initialize","params":null}"#;
+    let reply = oxml_mcp::handle_line(line).expect("a reply");
+
+    // The point is not which error comes back, but that the reply is
+    // itself parseable. A malformed reply is unrecoverable for the
+    // client; a JSON-RPC error is not.
+    let parsed = oxml_json::parse(&reply);
+    assert!(parsed.is_ok(), "reply is not valid JSON: {reply}");
+    assert!(reply.contains("error"), "expected an error, got {reply}");
+}

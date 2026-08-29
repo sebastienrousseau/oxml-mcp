@@ -9,10 +9,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28cdbbf867cae17da53b64d7c96ea9c0454928d17e03aa5e82bc4e96bcac1e5e"
 
 [[package]]
+name = "oxml-json"
+version = "0.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b320bee7228e8f8cd4b909eaafae0963aa268a05fad1b8d5ce9f2d82ed43847"
+
+[[package]]
 name = "oxml-mcp"
 version = "0.0.7"
 dependencies = [
  "oxml",
+ "oxml-json",
  "xmlschema",
 ]
 

@@ -14,12 +14,10 @@
 
 #![forbid(unsafe_code)]
 
-mod json;
-
 use std::fmt::Write as _;
 use std::io::{BufRead, Write};
 
-use json::Json;
+use oxml_json::{self as json, Json};
 
 /// The MCP revision this server implements.
 ///
