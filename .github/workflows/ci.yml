@@ -64,7 +64,7 @@ jobs:
       matrix:
         target: [handle_line]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # cargo-fuzz needs nightly for the sanitiser flags.
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -94,7 +94,7 @@ jobs:
     name: DCO sign-off
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # A requirement nothing verifies is a request. This checks every
