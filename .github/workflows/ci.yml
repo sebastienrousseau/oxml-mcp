@@ -52,6 +52,13 @@ jobs:
   fuzz:
     name: Fuzz (handle_line)
     runs-on: ubuntu-latest
+    # cargo-fuzz needs nightly for its sanitiser flags, and
+    # `rust-toolchain.toml` overrides whatever the toolchain action
+    # installed. Without this the job runs under the pinned 1.98.0 and
+    # fails with "failed to run `rustc` to learn about target-specific
+    # information", which does not name the cause.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     strategy:
       fail-fast: false
       matrix:
@@ -72,6 +79,16 @@ jobs:
       - run: >
           cargo fuzz run ${{ matrix.target }}
           -- -max_total_time=300 -print_final_stats=1
+
+      # A crash is the whole point of the job; losing the input that
+      # caused it would mean knowing only that something broke.
+      - name: Upload any crash
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
 
   lint:
     name: Lint
