@@ -341,9 +341,13 @@ fn run_query(
                      to see which namespaces the document uses."
                 )
             } else {
-                format!("The XPath expression is invalid: {e}")
+                let (line, column) = xpath_line_column(xpath, e.offset);
+                format!(
+                    "The XPath expression is invalid at line {line}, column {column}: {}",
+                    e.message
+                )
             }
-        })?;
+    })?;
     let value = compiled.evaluate(&doc);
 
     let Some(nodes) = value.nodes() else {
@@ -362,6 +366,20 @@ fn run_query(
     } else {
         lines.join("\n")
     })
+}
+
+fn xpath_line_column(input: &str, offset: usize) -> (usize, usize) {
+    let mut end = offset.min(input.len());
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    let upto = &input[..end];
+    let line = upto.matches('\n').count() + 1;
+    let column = upto
+        .rsplit('\n')
+        .next()
+        .map_or(1, |line| line.chars().count() + 1);
+    (line, column)
 }
 
 fn run_validate(xml: &str, xsd: &str) -> Result<String, String> {
@@ -886,7 +904,26 @@ mod tests {
         );
         assert!(is_error(&r));
         assert!(
-            text_of(&r).contains("XPath expression is invalid"),
+            text_of(&r)
+                .contains("XPath expression is invalid at line 1, column 3"),
+            "{}",
+            text_of(&r)
+        );
+    }
+
+    #[test]
+    fn an_invalid_multiline_xpath_reports_expression_line_and_column() {
+        let r = tool_call(
+            "xml_query",
+            vec![
+                ("xml", Json::str(DOC)),
+                ("xpath", Json::str("//book[\n@lang = ]")),
+            ],
+        );
+        assert!(is_error(&r));
+        assert!(
+            text_of(&r)
+                .contains("XPath expression is invalid at line 2, column 9"),
             "{}",
             text_of(&r)
         );
