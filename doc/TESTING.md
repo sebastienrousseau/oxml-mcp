@@ -8,8 +8,10 @@
 cargo test
 ```
 
-57 tests, covering the JSON parser and serialiser, request dispatch,
-each tool, the transport loop, and the error paths.
+40 tests, covering request dispatch, each tool, the transport loop,
+and the error paths. JSON parsing and serialisation moved to
+`oxml-json` at 0.0.8 and are tested there, which is why this number
+fell rather than rose.
 
 The JSON layer carries most of them, because it is hand-written and its
 input is untrusted. One bug it produced is worth recording: escaped
