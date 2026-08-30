@@ -46,7 +46,7 @@ in either direction fails the build.
 ## The evidence
 
 - `#![forbid(unsafe_code)]`, checked by a CI job.
-- 40 tests over request dispatch, each tool, the transport loop and the error paths. JSON parsing moved to `oxml-json` at 0.0.8 and is tested there, which is why this number fell rather than rose.
+- 43 tests over request dispatch, each tool, the transport loop and the error paths. JSON parsing moved to `oxml-json` at 0.0.8 and is tested there, which is why this number fell rather than rose.
 - 99.18% line coverage, gated at a 95% floor.
 - A malformed request is answered with a JSON-RPC error, never a disconnection: one bad line must not cost a client its session.
 

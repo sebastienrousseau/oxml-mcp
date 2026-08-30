@@ -27,10 +27,13 @@ server; for those two tools it need not be.
 
 `xml_query` and `xml_validate` genuinely need the tree.
 
-**2. Position information in tool errors.** `xml_check` reports the
-line and column of a well-formedness violation. `xml_query` and
-`xml_validate` report what went wrong but not always where, and a
-model that cannot locate a fault will guess at it.
+**2. Position information for schema violations.** `xml_check`
+reports line and column; `xml_query` reports the position in the
+expression with a caret under it, added at 0.0.9. `xml_validate`
+reports the path to the offending element -- `/library/book[2]/title`
+-- which locates it in the tree but not in the source text a caller
+would edit. Turning a path into a line and column needs the parser to
+retain node positions, which is work in `oxml` rather than here.
 
 **3. A document handle.** Every call re-parses the XML it is given. A
 model that asks five questions of one document pays the parse five

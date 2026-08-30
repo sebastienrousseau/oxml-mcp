@@ -316,6 +316,30 @@ fn namespace_bindings(request: &Json) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Show `expression` with a caret under the byte at `offset`.
+///
+/// `XPathError` reports a byte offset. A caller that can see the
+/// expression can count to it; the caller here is a language model
+/// counting characters in a string it is also trying to fix, and one
+/// that miscounts edits the wrong part and reports success.
+///
+/// The caret is placed by counting *characters* before the offset, not
+/// bytes. An expression containing a non-ASCII name -- which XML
+/// permits and `XPath` therefore does -- has more bytes than characters,
+/// and a caret placed by byte count drifts right of the fault.
+fn point_at(expression: &str, offset: usize) -> String {
+    let offset = offset.min(expression.len());
+    // Round down to a character boundary: an offset can land inside a
+    // multi-byte character when the parser stopped there, and slicing
+    // mid-character would panic.
+    let mut boundary = offset;
+    while boundary > 0 && !expression.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let columns = expression[..boundary].chars().count();
+    format!("    {expression}\n    {}^", " ".repeat(columns))
+}
+
 fn run_query(
     xml: &str,
     xpath: &str,
@@ -341,7 +365,11 @@ fn run_query(
                      to see which namespaces the document uses."
                 )
             } else {
-                format!("The XPath expression is invalid: {e}")
+                format!(
+                    "The XPath expression is invalid: {}\n\n{}",
+                    e.message,
+                    point_at(xpath, e.offset)
+                )
             }
         })?;
     let value = compiled.evaluate(&doc);
@@ -890,6 +918,50 @@ mod tests {
             "{}",
             text_of(&r)
         );
+    }
+
+    #[test]
+    fn an_invalid_xpath_shows_where_it_failed() {
+        // A byte offset is something the caller has to count to. The
+        // caller here is a model counting characters in a string it is
+        // also trying to fix, and one that miscounts edits the wrong
+        // part and reports success.
+        let r = tool_call(
+            "xml_query",
+            vec![("xml", Json::str(DOC)), ("xpath", Json::str("//book["))],
+        );
+        let text = text_of(&r);
+        assert!(is_error(&r));
+        assert!(text.contains("//book["), "the expression is echoed: {text}");
+        assert!(text.contains('^'), "a caret marks the position: {text}");
+
+        // The caret sits under the offset the parser reported, which
+        // for this expression is the byte after the `[`.
+        let caret_line = text.lines().last().expect("a caret line");
+        assert_eq!(
+            caret_line.trim_end().len()
+                - caret_line.trim_end().trim_start().len(),
+            4 + 7,
+            "caret column, in: {text}"
+        );
+    }
+
+    #[test]
+    fn the_caret_is_placed_by_characters_not_bytes() {
+        // `é` is two bytes and one column. A caret placed by byte
+        // count drifts right of the fault on any expression naming a
+        // non-ASCII element -- which XML permits and XPath therefore
+        // does too.
+        assert_eq!(point_at("é[", 3), "    é[\n      ^");
+        assert_eq!(point_at("ab[", 3), "    ab[\n       ^");
+    }
+
+    #[test]
+    fn a_caret_offset_inside_a_character_does_not_panic() {
+        // An offset can land mid-character when the parser stops
+        // there. Slicing on it would panic.
+        let out = point_at("é", 1);
+        assert!(out.contains('^'), "{out}");
     }
 
     #[test]
