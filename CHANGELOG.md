@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Three transports from one command line.** `oxml-mcp` speaks stdio
+  as before; `oxml-mcp --transport streamable-http --host 127.0.0.1
+  --port 8000` serves `/mcp`; `oxml-mcp --transport sse --port 8001`
+  serves the older HTTP+SSE transport at `/sse` and `/messages/`.
+  `--version` and `--help` exist. The transport layer is
+  `src/transport.rs`, one file shared verbatim with the other Rust
+  servers of the suite. See
+  [ADR 0001](doc/adr/0001-three-transports-one-command-line.md).
+
+- **Both current MCP revisions.** `2025-11-25` (`initialize`,
+  `Mcp-Session-Id`) and `2026-07-28` (stateless, `server/discover`,
+  per-request `_meta`, mirrored routing headers) on the one streamable
+  HTTP endpoint, and over stdio. Older revisions back to `2024-11-05`
+  are accepted from a client that asks for them.
+
+- **Structured results and annotations.** Every tool declares an
+  `outputSchema` and returns its answer as `structuredContent` beside
+  the text; every tool is annotated read-only, idempotent and
+  closed-world. A schema violation keeps its violations in the
+  structured half. The library exposes the outputs as `QueryOutput`,
+  `ValidateOutput`, `CheckOutput` and `InspectOutput`.
+
 - **Directory listings.** `server.json` for the MCP registry and
   `glama.json` for Glama, an OCI image built and pushed to
   `ghcr.io/sebastienrousseau/oxml-mcp` on every release tag, and a
@@ -16,6 +38,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server could only be found on crates.io, which no MCP directory reads.
   `scripts/check-mcp-manifests.sh` keeps both manifests on the crate's
   version.
+
+### Changed
+
+- **The protocol is the official SDK's.** `rmcp` 3.4 replaces the
+  hand-written JSON-RPC loop. The four tools are unchanged in name,
+  arguments, descriptions and wording; what changed is around them.
+  A stdio client must now open with the handshake (or, in the
+  stateless revision, name its protocol version in `_meta`) before
+  its first request. A missing or mistyped argument is an `isError`
+  result naming the field, rather than a tool that ran on an empty
+  string. An unknown tool is an `isError` result naming the four that
+  exist, rather than `-32602`: the stateless HTTP revision carries
+  that code as an HTTP 400, which a model never reads. A line that is
+  not JSON draws no reply over stdio and `415` over HTTP; the session
+  survives either way.
+
+- The crate depends on `rmcp`, `tokio`, `axum` and `serde`. The
+  minimum supported Rust version is 1.88.
+
+- The example scripts open every session with the handshake; the
+  benchmark measures the four tools against the parse they wrap; the
+  fuzz target feeds arbitrary documents, expressions and schemas to
+  the tools.
+
+### Removed
+
+- `oxml_mcp::handle_line` and `oxml_mcp::serve`. The library is the
+  four functions and `XmlServer`.
 
 ## [0.0.8] - 2026-08-29
 

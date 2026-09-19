@@ -5,7 +5,7 @@
   ],
   "title": "oxml-mcp",
   "display_name": "oxml MCP",
-  "description": "Model Context Protocol server exposing oxml's XML toolchain to AI agents: xml_query runs XPath 1.0 over a document, xml_inspect reports its structure (root, namespaces, element counts, depth), xml_check tests well-formedness with a located reason, and xml_validate validates against an XSD schema. Pure Rust, no unsafe code, no network, no configuration; one static binary over JSON-RPC 2.0 on stdio. Works with Claude Desktop, Claude Code, Cursor, Zed and Continue.dev.",
+  "description": "Model Context Protocol server exposing oxml's XML toolchain to AI agents: xml_query runs XPath 1.0 over a document, xml_inspect reports its structure (root, namespaces, element counts, depth), xml_check tests well-formedness with a located reason, and xml_validate validates against an XSD schema. Pure Rust, no unsafe code, no configuration; one binary speaking MCP 2025-11-25 and 2026-07-28 over stdio, streamable HTTP (/mcp) or the older HTTP+SSE transport. Works with Claude Desktop, Claude Code, Cursor, Zed and Continue.dev.",
   "version": "0.0.8",
   "repository": "https://github.com/sebastienrousseau/oxml-mcp",
   "homepage": "https://github.com/sebastienrousseau/oxml-mcp",

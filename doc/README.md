@@ -5,7 +5,8 @@
 | File | Subject |
 |---|---|
 | [TOOL-DESIGN.md](TOOL-DESIGN.md) | Why four tools, and why documents are strings |
-| [PROTOCOL.md](PROTOCOL.md) | JSON-RPC, MCP, and the two kinds of failure |
+| [PROTOCOL.md](PROTOCOL.md) | Transports, the two current MCP revisions, and the two kinds of failure |
+| [adr/](adr/index.md) | Architecture decision records |
 | [SECURITY-MODEL.md](SECURITY-MODEL.md) | Two hostile inputs, not one |
 | [TESTING.md](TESTING.md) | How the examples double as the test suite |
 | [BENCHMARKS.md](BENCHMARKS.md) | Latency per request, and why it is measured in pairs |

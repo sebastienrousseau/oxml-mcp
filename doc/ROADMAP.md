@@ -6,7 +6,8 @@
 
 A Model Context Protocol server exposing four read-only tools over
 `oxml` and `xmlschema`: `xml_query`, `xml_validate`, `xml_check` and
-`xml_inspect`. It speaks JSON-RPC over stdio, one message per line.
+`xml_inspect`. It speaks MCP over stdio, streamable HTTP and the
+older HTTP+SSE transport.
 
 The point is that a model can ask questions of a document far larger
 than its context without the document entering that context. A query
