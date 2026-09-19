@@ -26,7 +26,8 @@
 
 - [Why a model wants this](#why-a-model-wants-this) — the problem an XML tool solves for an LLM
 - [Install](#install) — Cargo, from source
-- [Quick Start](#quick-start) — one line, no client required
+- [Transports](#transports) — stdio, streamable HTTP, SSE
+- [Quick Start](#quick-start) — three lines, no client required
 - [Configure](#configure) — Claude Desktop, and any MCP client
 
 **The oxml ecosystem**
@@ -36,7 +37,7 @@
 **Reference**
 
 - [Tools](#tools) — `xml_query`, `xml_validate`, `xml_check`, `xml_inspect`
-- [Protocol](#protocol) — JSON-RPC 2.0 over stdio, MCP `2024-11-05`
+- [Protocol](#protocol) — MCP `2025-11-25` and `2026-07-28`, and the two kinds of failure
 - [Errors](#errors) — the two kinds, and which is which
 - [Design](#design) — why four tools, and why documents are strings
 - [Capabilities in 0.0.8](#capabilities-in-008) — release inventory
@@ -83,18 +84,45 @@ points at it):
 docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.8
 ```
 
+## Transports
+
+One binary, three ways to reach it. Every server in the suite takes
+the same flags.
+
+| Command | Transport | Endpoint | Protocol revisions |
+|---|---|---|---|
+| `oxml-mcp` | stdio | stdin and stdout | `2024-11-05` to `2026-07-28` |
+| `oxml-mcp --transport streamable-http --host 127.0.0.1 --port 8000` | Streamable HTTP | `http://127.0.0.1:8000/mcp` | `2025-11-25` and `2026-07-28` |
+| `oxml-mcp --transport sse --port 8001` | HTTP+SSE (legacy) | `http://127.0.0.1:8001/sse`, `/messages/` | `2024-11-05` |
+
+Streamable HTTP serves both current revisions on the one endpoint: a
+client that sends `initialize` gets a session and an `Mcp-Session-Id`;
+a client that names `2026-07-28` in each request's `_meta` is served
+statelessly, with `server/discover` in place of the handshake.
+Responses stream as server-sent events, and `GET /mcp` opens the
+server-to-client stream. The SSE transport is the older one, for hosts
+that still expect an `endpoint` event and a message URL.
+
+The HTTP transports bind the loopback interface unless `--host` says
+otherwise, and they do not authenticate. Put the server behind a
+gateway you trust before binding a routable address. `--version` and
+`--help` do what they say.
+
 ## Quick Start
 
-The server speaks JSON-RPC 2.0 over stdio, so one line is enough to see
-it work — no client required:
+The server speaks JSON-RPC 2.0 over stdio, so three lines are enough to
+see it work — the handshake, then a call — and no client is required:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<library><book><title>Dune</title></book></library>","xpath":"//title"}}}' \
-  | oxml-mcp
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"me","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<library><book><title>Dune</title></book></library>","xpath":"//title"}}}' \
+  | oxml-mcp | tail -n 1
 ```
 
 ```json
-{"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"Dune","type":"text"}],"isError":false}}
+{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","content":[{"type":"text","text":"Dune"}],"structuredContent":{"count":1,"values":["Dune"]},"isError":false}}
 ```
 
 For day-to-day use you want a client to do that for you — see
@@ -121,8 +149,11 @@ For Claude Code:
 claude mcp add oxml -- oxml-mcp
 ```
 
-The server speaks JSON-RPC 2.0 over stdin and stdout, one message per
-line. It takes no arguments and reads no configuration file.
+Without arguments the server speaks JSON-RPC 2.0 over stdin and
+stdout, one message per line, which is what these clients expect. A
+client that connects over HTTP instead points at a server started with
+`--transport streamable-http` — see [Transports](#transports). There is
+no configuration file.
 
 ## The oxml ecosystem
 
@@ -159,7 +190,9 @@ Germinal
 ```
 
 One value per line. Expressions returning a number, string or boolean
-return that value directly, so `count(//t)` gives `2`.
+return that value directly, so `count(//t)` gives `2`. Every tool also
+returns its answer as `structuredContent`, against the `outputSchema`
+it advertises — here `{"count": 2, "values": ["Dune", "Germinal"]}`.
 
 ### `xml_inspect`
 
@@ -207,14 +240,23 @@ to the element it concerns.
 
 ## Protocol
 
-JSON-RPC 2.0 over stdio, one message per line, MCP protocol version
-`2024-11-05`.
+MCP over JSON-RPC 2.0, implemented by [`rmcp`](https://crates.io/crates/rmcp),
+the official Rust SDK. Two revisions are current and both are served:
+`2025-11-25`, with an `initialize` handshake, and `2026-07-28`, which
+has no handshake — each request names its revision in `_meta` and
+`server/discover` describes the server. Older revisions back to
+`2024-11-05` are accepted from a client that asks for them.
 
 | Method | |
 |---|---|
-| `initialize` | Returns capabilities and server info |
-| `tools/list` | The four tools with their JSON schemas |
+| `initialize` | Capabilities, server info, the negotiated revision |
+| `server/discover` | The same, for the stateless revision |
+| `tools/list` | The four tools: input schema, output schema, annotations |
 | `tools/call` | Invoke one |
+| `ping` | Answered |
+
+Every tool is annotated read-only, idempotent and closed-world, so a
+client can call it without asking.
 
 The two kinds of failure are kept apart, because MCP distinguishes
 them and a model only ever sees one of them.
@@ -224,19 +266,20 @@ invalid expression — is a *successful* JSON-RPC response carrying
 `isError: true`. The model sees the text and can correct itself.
 
 **A request the protocol rejects** — malformed JSON, an unknown method,
-an unknown tool, a request with an `id` but no `method` — is a JSON-RPC
-error with the standard code. The tool never ran, and the client
-handles it rather than the model.
+a request with an `id` but no `method` — is a JSON-RPC error with the
+standard code, or an HTTP status over HTTP. Nothing ran, and the
+client handles it rather than the model.
 
 | Situation | Reply |
 |---|---|
 | Malformed document | `result`, `isError: true` |
 | Invalid XPath expression | `result`, `isError: true` |
-| Schema violation | `result`, `isError: true` |
-| Unknown tool | `error`, `-32602` |
+| Schema violation | `result`, `isError: true`, with the violations as `structuredContent` |
+| Missing or mistyped argument | `result`, `isError: true`, naming the field |
+| Unknown tool | `result`, `isError: true`, naming the four that exist |
 | Unknown method | `error`, `-32601` |
-| `id` with no `method` | `error`, `-32600` |
-| Malformed JSON | `error`, `-32700` |
+| `id` with no `method` | `error` |
+| Malformed JSON | HTTP `415` over HTTP; skipped over stdio, the session continues |
 
 ## Errors
 
@@ -263,10 +306,11 @@ a file. The client decides what the model may read, which is where that
 decision belongs — a server that took paths would be a way to read any
 file on the machine.
 
-**No dependencies.** JSON parsing and serialisation are in
-`src/json.rs`, about 300 lines. For a program whose entire input is
-untrusted JSON arriving on stdin, a dependency tree is a liability, and
-this one has none beyond `oxml` and `xmlschema`.
+**One protocol implementation, not ours.** The JSON-RPC and MCP layers
+are the official SDK's. Three protocol revisions and three transports
+are a protocol project, and keeping a hand-written one honest against
+them is not where the value of an XML server lies. What is this
+crate's own is the four functions and the text a model reads.
 
 ## Capabilities in 0.0.8
 
@@ -294,7 +338,9 @@ than competing servers:
 
 The last row is the one worth pausing on. A server that fetches is a
 server that can be pointed at your internal network by a document it
-was asked to read. This one has no code that opens a socket.
+was asked to read. The tools here have no code that opens a socket;
+the only listener is the one you start with `--transport`, and it
+only ever answers.
 
 ## Benchmarks
 
@@ -362,8 +408,11 @@ because XPath is already a query language.
 
 ### Does it work with clients other than Claude?
 
-It implements MCP over stdio with no client-specific behaviour, so any
-compliant client should work.
+It implements MCP with no client-specific behaviour, over stdio and
+both HTTP transports, so any compliant client should work. It is
+checked against the Python SDK's client over both HTTP transports and
+scores 100/100 with an independent MCP auditor in both current
+protocol eras.
 
 ### My document contains an emoji and the call failed.
 
@@ -403,12 +452,12 @@ binding.
 A JSON-RPC parse error, `-32700`. The server does not exit; the next
 line is read as normal.
 
-### Why is an unknown tool an error rather than `isError`?
+### Why is an unknown tool `isError` rather than a JSON-RPC error?
 
-Because the tool never ran. MCP puts unknown tools and invalid
-arguments in the JSON-RPC error category and reserves `isError` for a
-tool that executed and could not do the job — the first is the
-client's problem, the second is the model's. See
+Until 0.0.8 it was `-32602`. In the stateless HTTP revision the SDK
+carries that code as an HTTP 400, which a client reports as a
+transport fault and a model never reads. A model that misspelt a tool
+name is better served by text naming the four tools that exist. See
 [Protocol](#protocol).
 
 ## Development
@@ -439,10 +488,11 @@ CI runs the same set on Linux, macOS and Windows.
 
 ## Security
 
-No filesystem access. No network access. External entities never
-dereferenced. Entity expansion and recursion bounded.
-`#![forbid(unsafe_code)]`, and no dependencies beyond `oxml` and
-`xmlschema`.
+The tools never open a file or a socket. External entities are never
+dereferenced. Entity expansion and recursion are bounded.
+`#![forbid(unsafe_code)]`. The HTTP listeners exist only when asked
+for on the command line, bind loopback by default, and do not
+authenticate — see [Transports](#transports).
 
 The threat model is that both the document and the JSON around it are
 hostile — the document because a model was asked to look at something
@@ -455,6 +505,7 @@ input. See
 - [API documentation](https://docs.rs/oxml-mcp)
 - [BENCHMARKS.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/BENCHMARKS.md)
 - [PROTOCOL.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/PROTOCOL.md)
+- [Architecture decision records](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/adr/index.md)
 - [TOOL-DESIGN.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/TOOL-DESIGN.md)
 - [SECURITY-MODEL.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/SECURITY-MODEL.md)
 - [TESTING.md](https://github.com/sebastienrousseau/oxml-mcp/blob/main/doc/TESTING.md)

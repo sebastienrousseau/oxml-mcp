@@ -23,7 +23,7 @@ debug-assertions = true
 overflow-checks = true
 
 [[bin]]
-name = "handle_line"
-path = "fuzz_targets/handle_line.rs"
+name = "tools"
+path = "fuzz_targets/tools.rs"
 test = false
 doc = false

@@ -20,31 +20,46 @@ call "an invalid XPath expression sets isError" \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<a/>","xpath":"//["}}}' \
   '"isError":true'
 
-# An unknown tool is a *protocol* error, not a tool failure: the tool
-# never ran. MCP puts unknown tools and invalid arguments in the
-# JSON-RPC error category and reserves isError for a tool that ran and
-# could not do the job.
-call "an unknown tool is a JSON-RPC error, not a tool failure" \
-  '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}' \
-  '-32602'
+# A schema violation is a tool failure the model must see, and also a
+# complete validation result, so both halves are returned.
+call "a schema violation sets isError and keeps the structured result" \
+  '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"xml_validate","arguments":{"xml":"<wrong/>","xsd":"<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"><xs:element name=\"right\"/></xs:schema>"}}}' \
+  '"valid":false'
 
-# Protocol failures get JSON-RPC codes.
-call "malformed JSON is a parse error" \
-  '{not json' \
-  '-32700'
+# A tool the server does not have is reported as a tool result naming
+# the tools it does have. The SDK's default, -32602, becomes an HTTP
+# 400 in the stateless revision -- a transport fault the model never
+# reads.
+call "an unknown tool is a result naming the tools that exist" \
+  '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}' \
+  'Unknown tool: no_such_tool'
+
+# A missing argument is a tool failure the model can act on: the SDK
+# names the field.
+call "a missing required argument names the field" \
+  '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<a/>"}}}' \
+  'missing field `xpath`'
 
 call "an unknown method is method-not-found" \
-  '{"jsonrpc":"2.0","id":5,"method":"nope"}' \
+  '{"jsonrpc":"2.0","id":7,"method":"nope"}' \
   '-32601'
 
-call "a request with an id but no method is invalid" \
-  '{"jsonrpc":"2.0","id":6}' \
-  '-32600'
+call "a request with an id but no method is an error" \
+  '{"jsonrpc":"2.0","id":8}' \
+  '"error"'
+
+# A line that is not JSON at all draws no reply: the SDK skips it and
+# reads the next line. The session survives it, which is the part that
+# matters -- the request after it is answered.
+call_raw "a line that is not JSON does not end the session" \
+  "$INITIALIZE" "$INITIALIZED" '{not json' \
+  '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"xml_check","arguments":{"xml":"<a/>"}}}' \
+  -- '"id":9'
 
 # An external entity is never dereferenced, so a document that asks the
 # server to read /etc/passwd gets nothing.
 call "an external entity is never substituted" \
-  '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<!DOCTYPE d [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><d>&x;</d>","xpath":"string(/d)"}}}' \
+  '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<!DOCTYPE d [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><d>&x;</d>","xpath":"string(/d)"}}}' \
   '"isError"'
 
 finish

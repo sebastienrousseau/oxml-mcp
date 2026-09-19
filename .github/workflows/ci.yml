@@ -72,7 +72,7 @@ jobs:
       - run: python3 scripts/check-example-coverage.py
 
   fuzz:
-    name: Fuzz (handle_line)
+    name: Fuzz (tools)
     runs-on: ubuntu-latest
     # cargo-fuzz needs nightly for its sanitiser flags, and
     # `rust-toolchain.toml` overrides whatever the toolchain action
@@ -84,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [handle_line]
+        target: [tools]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # cargo-fuzz needs nightly for the sanitiser flags.

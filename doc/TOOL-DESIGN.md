@@ -53,16 +53,26 @@ Returning JSON would mean the model parses a structure to read values
 it was going to read as text anyway, and doubles the token cost of
 every result through quoting and escaping.
 
-## No dependencies
+## Text first, structured beside it
 
-JSON parsing and serialisation are in `src/json.rs`, roughly 300 lines.
+Every tool also returns its answer as `structuredContent`, against
+the `outputSchema` it advertises. The text is still what the model
+reads; the structure is for a client that wants a count or a list of
+violations without parsing prose. The two say the same thing, built
+from the same value.
 
-The entire input to this program is untrusted JSON arriving on stdin.
-A dependency tree there is a liability, and the crate has none beyond
-`oxml` and `xmlschema`.
+## The protocol is not ours
 
-Writing it did produce one bug worth recording: escaped surrogate pairs
-were rejected. Python's `json.dumps` escapes non-ASCII by default, so
-an emoji arrives as a surrogate pair and **every Python client sending
-one failed**. It is fixed, and asserted in
+Until 0.0.8 the JSON-RPC layer was hand-written, about 300 lines, on
+the argument that a program whose whole input is untrusted JSON should
+carry no dependency tree. Three protocol revisions and three
+transports changed the arithmetic: a hand-written layer kept honest
+against all of them is a protocol project, and the value of this crate
+is the four tools. The layer is now `rmcp`, the official SDK. See
+[ADR 0001](adr/0001-three-transports-one-command-line.md).
+
+The hand-written layer did produce one bug worth recording: escaped
+surrogate pairs were rejected. Python's `json.dumps` escapes non-ASCII
+by default, so an emoji arrives as a surrogate pair and **every Python
+client sending one failed**. The assertion that caught it stays in
 [`examples/session.sh`](../examples/session.sh).

@@ -8,35 +8,42 @@
 cargo test
 ```
 
-41 tests, covering request dispatch, each tool, the transport loop,
-and the error paths. JSON parsing and serialisation moved to
-`oxml-json` at 0.0.8 and are tested there, which is why this number
-fell rather than rose.
+50 tests, covering each tool and its structured result, the
+command line, and every transport: a session held with the SDK's own
+client through an in-memory pipe, the binary driven over stdio, and
+the binary driven over both HTTP transports by a small hand-written
+HTTP/1.1 client. The JSON-RPC layer belongs to `rmcp` and is tested
+there.
 
-The JSON layer carries most of them, because it is hand-written and its
-input is untrusted. One bug it produced is worth recording: escaped
-surrogate pairs were rejected, so a document containing an emoji failed
-from any Python client — `json.dumps` escapes non-ASCII by default. The
-fix was verified by reverting it and watching the test fail.
+## A session without a process
 
-## The transport, without a subprocess
+`tests/serve.rs` connects the SDK's client to the server through
+`tokio::io::duplex`, so what is asserted is what a client sees: the
+negotiated revision, the catalogue with its schemas and annotations,
+a result with its structured half, and a tool failure arriving as an
+`isError` result rather than a protocol error.
 
-`serve` is generic over its two ends, so a test can hand it an
-in-memory pipe:
+Its first version deadlocked. `serve` returns only once the handshake
+is done, so a test that awaited the server before starting the client
+waited for a message nobody would send. The server side now runs in
+its own task, which is also how the example does it.
 
-```rust
-let mut out = Vec::new();
-oxml_mcp::serve(std::io::Cursor::new(input), &mut out);
-```
+## The wire, as a client sees it
 
-`tests/serve.rs` uses that for the cases a real pipe will not produce
-on demand — a writer that starts failing mid-session, input that stops
-in the middle of a line, a malformed line followed by a good one. The
-broken-pipe test counts *refused writes* rather than bytes written,
-because a sink that rejects everything looks identical from the
-outside whether the loop stopped or carried on; the refusals are what
-differ. It was checked by making `serve` ignore the write error and
-watching the count go from 1 to 2.
+`tests/http.rs` starts the binary on `--port 0`, reads the port it
+announces, and speaks HTTP/1.1 over a plain socket, decoding chunked
+bodies and server-sent events by hand. A client library would have
+hidden the details this file exists to check: the `Mcp-Session-Id`
+on an `initialize` reply, the priming event that carries no data, the
+`405` a stateless `GET` gets, the `-32020` a mirrored routing header
+draws when it disagrees with the body, and the `endpoint` event that
+opens the older SSE transport.
+
+Two of its expectations were wrong when written and the server was
+right: the `2026-07-28` revision requires `clientCapabilities` in
+`_meta` beside the protocol version, and it requires the `Mcp-Method`
+header on every request. Both are now documented because a test
+found them, not the other way round.
 
 ## The examples are end-to-end tests
 
@@ -49,30 +56,35 @@ every request in the README fails CI when it stops being true.
 
 | Script | Covers |
 |---|---|
-| `session.sh` | `initialize`, `tools/list`, all four tools, `count()`, an escaped surrogate pair |
-| `errors.sh` | Malformed document, invalid expression, unknown tool, all four JSON-RPC codes, an external entity |
+| `session.sh` | The handshake in both current revisions, `server/discover`, `tools/list` with schemas and annotations, all four tools, `count()`, an escaped surrogate pair |
+| `errors.sh` | Malformed document, invalid expression, schema violation, unknown tool, missing argument, unknown method, a line that is not JSON, an external entity |
 
-Writing them corrected a claim: an **unknown tool** is a JSON-RPC error
-(`-32602`), not `isError: true`. MCP puts unknown tools and invalid
-arguments in the protocol-error category and reserves `isError` for a
-tool that ran and could not do the job. The assertion was written the
-other way round and the server was right.
+Writing them once corrected a claim the other way: an **unknown
+tool** was a JSON-RPC error (`-32602`), and the assertion said
+`isError`. From 0.0.9 the assertion is right and the server changed:
+the stateless HTTP revision carries `-32602` as an HTTP 400, which no
+model reads, so an unknown tool is now a result naming the tools that
+exist.
 
 ## Fuzzing
 
 ```bash
-cargo +nightly fuzz run handle_line
+cargo +nightly fuzz run tools
 ```
 
-`handle_line` covers the JSON-RPC handler, which is fed whatever a client sends through a hand-written JSON parser.
+`tools` feeds arbitrary documents, expressions and schemas to the four
+functions, which is the surface still written here now that the
+JSON-RPC layer is the SDK's. One input, split on NUL bytes, exercises
+every tool.
 
-4,136,133 executions have run without a crash. CI runs the target for
-300 seconds on every pull request, seeded from the tracked files in
-`fuzz/seeds/` — the grown corpus is build output and is not tracked,
-so a run starts from the same place every time rather than from
-whatever a previous run happened to discover. A crash input is
-uploaded as a build artefact, because knowing only that something
-broke is not much use.
+The previous target, `handle_line`, ran 4,136,133 executions without a
+crash against the hand-written JSON-RPC handler; that handler is gone
+and so is the figure. CI runs the target for 300 seconds on every pull
+request, seeded from the tracked files in `fuzz/seeds/` — the grown
+corpus is build output and is not tracked, so a run starts from the
+same place every time rather than from whatever a previous run
+happened to discover. A crash input is uploaded as a build artefact,
+because knowing only that something broke is not much use.
 
 ## Coverage
 

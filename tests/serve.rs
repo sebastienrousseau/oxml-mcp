@@ -1,140 +1,168 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 oxml. All rights reserved.
 
-//! `serve` driven through an in-memory pipe.
+//! A whole session through an in-memory pipe.
 //!
-//! `tests/server.rs` covers the same loop through a real process,
-//! which is the honest end-to-end check but can only supply a pipe
-//! that behaves. These cover the ends it cannot: a writer that starts
-//! failing mid-session, and input that stops in the middle of a line.
-//! Both are things a real client does -- it disconnects -- and the
-//! loop must end rather than spin or panic.
+//! `tests/server.rs` drives the real binary over stdio, which is the
+//! honest end-to-end check but can only assert on lines of text. These
+//! hold a session with the SDK's own client, so what is asserted is
+//! what a client sees: the negotiated protocol, the tool catalogue,
+//! and results with their structured half.
 
-use std::io::{self, Cursor, Write};
+use rmcp::ServiceExt;
+use rmcp::model::{CallToolRequestParams, ContentBlock, ProtocolVersion};
+use rmcp::service::{RoleClient, RunningService};
+use serde_json::{Map, Value, json};
 
-/// A writer that fails once it has accepted `budget` bytes.
-///
-/// A closed pipe looks exactly like this from the server's side.
-struct Failing {
-    written: Vec<u8>,
-    budget: usize,
-    /// Writes attempted after the budget ran out.
-    ///
-    /// Counting them is what makes the test discriminate: a sink that
-    /// refuses bytes looks the same from the outside whether the loop
-    /// stopped or carried on regardless, because either way nothing
-    /// more arrives. The refusals do differ.
-    refused: usize,
-}
-
-impl Write for Failing {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.written.len() >= self.budget {
-            self.refused += 1;
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "gone"));
+/// A client connected to a fresh server over a duplex pipe.
+async fn session() -> RunningService<RoleClient, ()> {
+    let (client_io, server_io) = tokio::io::duplex(1 << 16);
+    // `serve` returns once the handshake is done, so the server must
+    // already be waiting when the client starts talking.
+    drop(tokio::spawn(async move {
+        if let Ok(server) = oxml_mcp::XmlServer::new().serve(server_io).await {
+            let _ = server.waiting().await;
         }
-        let take = buf.len().min(self.budget - self.written.len());
-        self.written.extend_from_slice(&buf[..take]);
-        Ok(take)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+    }));
+    ().serve(client_io)
+        .await
+        .expect("client completes the handshake")
 }
 
-/// One request line with the given id.
-fn line(id: u32) -> String {
-    format!(
-        r#"{{"jsonrpc":"2.0","id":{id},"method":"initialize","params":null}}"#
-    )
-}
-
-#[test]
-fn every_request_draws_exactly_one_reply_line() {
-    let input = format!("{}\n{}\n{}\n", line(1), line(2), line(3));
-    let mut out = Vec::new();
-    oxml_mcp::serve(Cursor::new(input.as_bytes()), &mut out);
-    let text = String::from_utf8(out).expect("utf-8");
-    assert_eq!(text.lines().count(), 3, "got {text}");
-    for (i, reply) in text.lines().enumerate() {
-        assert!(
-            reply.contains(&format!("\"id\":{}", i + 1)),
-            "reply {i} was {reply}"
-        );
+fn arguments(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(map) => map,
+        _ => panic!("arguments must be an object"),
     }
 }
 
-#[test]
-fn blank_lines_and_notifications_draw_no_reply() {
-    let input = format!(
-        "\n   \n{}\n{}\n",
-        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-        line(1)
-    );
-    let mut out = Vec::new();
-    oxml_mcp::serve(Cursor::new(input.as_bytes()), &mut out);
-    let text = String::from_utf8(out).expect("utf-8");
-    assert_eq!(text.lines().count(), 1, "got {text}");
+fn text_of(content: &[ContentBlock]) -> &str {
+    content
+        .first()
+        .and_then(ContentBlock::as_text)
+        .map(|t| t.text.as_str())
+        .expect("text content")
 }
 
-#[test]
-fn a_broken_pipe_ends_the_session_rather_than_looping() {
-    // Room for the first reply and nothing after it.
-    let first = oxml_mcp::handle_line(&line(1)).expect("a reply");
-    let input = format!("{}\n{}\n{}\n", line(1), line(2), line(3));
-    let mut sink = Failing {
-        written: Vec::new(),
-        budget: first.len() + 1,
-        refused: 0,
-    };
-    oxml_mcp::serve(Cursor::new(input.as_bytes()), &mut sink);
+#[tokio::test]
+async fn the_handshake_negotiates_a_current_revision() {
+    let client = session().await;
+    let info = client.peer_info().expect("initialize result");
+    let server_info = info.server_info.as_ref().expect("serverInfo");
+    assert_eq!(server_info.name, "oxml-mcp");
+    assert_eq!(server_info.version, env!("CARGO_PKG_VERSION"));
+    assert!(info.capabilities.tools.is_some(), "tools capability");
+    // The SDK client asks for its latest handshake revision; the server
+    // must agree to it rather than fall back.
+    assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
+    let _ = client.cancel().await.expect("clean close");
+}
+
+#[tokio::test]
+async fn the_catalogue_is_complete_and_annotated() {
+    let client = session().await;
+    let tools = client.list_all_tools().await.expect("tools/list");
+    let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    names.sort_unstable();
     assert_eq!(
-        sink.refused, 1,
-        "the loop should stop at the first refusal, not try every line"
+        names,
+        ["xml_check", "xml_inspect", "xml_query", "xml_validate"]
     );
+    for tool in &tools {
+        assert!(tool.description.is_some(), "{} undescribed", tool.name);
+        assert!(
+            tool.output_schema.is_some(),
+            "{} no outputSchema",
+            tool.name
+        );
+        let a = tool.annotations.as_ref().expect("annotations");
+        assert_eq!(a.read_only_hint, Some(true), "{} read-only", tool.name);
+    }
+    let _ = client.cancel().await.expect("clean close");
 }
 
-#[test]
-fn input_ending_mid_line_ends_the_session() {
-    // No trailing newline: `lines()` still yields the partial line, and
-    // a well-formed request on it deserves its reply.
-    let mut out = Vec::new();
-    oxml_mcp::serve(Cursor::new(line(1).into_bytes()), &mut out);
-    let text = String::from_utf8(out).expect("utf-8");
-    assert_eq!(text.lines().count(), 1, "got {text}");
+#[tokio::test]
+async fn a_call_returns_text_and_structured_content() {
+    let client = session().await;
+    let result = client
+        .call_tool(CallToolRequestParams::new("xml_query").with_arguments(
+            arguments(json!({"xml": "<a><b>Dune</b></a>", "xpath": "//b"})),
+        ))
+        .await
+        .expect("tools/call");
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    assert_eq!(text_of(&result.content), "Dune");
+    assert_eq!(
+        result.structured_content,
+        Some(json!({"count": 1, "values": ["Dune"]}))
+    );
+    let _ = client.cancel().await.expect("clean close");
 }
 
-#[test]
-fn malformed_input_does_not_end_the_session() {
-    // One bad line must not cost the client the rest of its session.
-    let input = format!("not json\n{}\n", line(2));
-    let mut out = Vec::new();
-    oxml_mcp::serve(Cursor::new(input.as_bytes()), &mut out);
-    let text = String::from_utf8(out).expect("utf-8");
-    assert_eq!(text.lines().count(), 2, "got {text}");
-    assert!(text.lines().next().expect("a line").contains("error"));
+#[tokio::test]
+async fn a_tool_failure_is_a_result_the_model_can_read() {
+    let client = session().await;
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("xml_check")
+                .with_arguments(arguments(json!({"xml": "<a>"}))),
+        )
+        .await
+        .expect("a bad document is a result, not a protocol error");
+    assert_eq!(result.is_error, Some(true));
+    assert!(text_of(&result.content).contains("not well-formed"));
+    let _ = client.cancel().await.expect("clean close");
 }
 
-#[test]
-fn a_number_too_large_for_f64_draws_an_error_not_malformed_output() {
-    // Shipped broken in 0.0.7. `1e999` is grammatically valid JSON;
-    // the parser turned it into infinity, and serialising infinity
-    // produced a reply that was not valid JSON at all. A client
-    // sending a large id got back something it could not parse, and
-    // the failure looked like a transport fault rather than a bad
-    // request.
-    //
-    // Found by fuzzing after the parser moved to `oxml-json`, where a
-    // round-trip assertion was added that neither copy had.
-    let line =
-        r#"{"jsonrpc":"2.0","id":1e999,"method":"initialize","params":null}"#;
-    let reply = oxml_mcp::handle_line(line).expect("a reply");
+#[tokio::test]
+async fn protocol_mistakes_are_json_rpc_errors() {
+    let client = session().await;
+    // A tool the server does not have is a result the model can read,
+    // naming the tools it does have.
+    let unknown = client
+        .call_tool(CallToolRequestParams::new("no_such_tool"))
+        .await
+        .expect("a result, not a protocol error");
+    assert_eq!(unknown.is_error, Some(true));
+    let text = text_of(&unknown.content);
+    assert!(text.contains("no_such_tool"), "{text}");
+    assert!(text.contains("xml_query"), "{text}");
 
-    // The point is not which error comes back, but that the reply is
-    // itself parseable. A malformed reply is unrecoverable for the
-    // client; a JSON-RPC error is not.
-    let parsed = oxml_json::parse(&reply);
-    assert!(parsed.is_ok(), "reply is not valid JSON: {reply}");
-    assert!(reply.contains("error"), "expected an error, got {reply}");
+    // A required argument missing is a tool failure naming the field,
+    // so the model can supply it.
+    let missing = client
+        .call_tool(
+            CallToolRequestParams::new("xml_query")
+                .with_arguments(arguments(json!({"xml": "<a/>"}))),
+        )
+        .await
+        .expect("a result, not a protocol error");
+    assert_eq!(missing.is_error, Some(true));
+    assert!(text_of(&missing.content).contains("xpath"), "{missing:?}");
+    let _ = client.cancel().await.expect("clean close");
+}
+
+#[tokio::test]
+async fn every_advertised_tool_is_callable() {
+    let client = session().await;
+    let doc = "<r><t>x</t></r>";
+    let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+        <xs:element name="r"/></xs:schema>"#;
+    for (name, args) in [
+        ("xml_query", json!({"xml": doc, "xpath": "//t"})),
+        ("xml_validate", json!({"xml": doc, "xsd": xsd})),
+        ("xml_check", json!({"xml": doc})),
+        ("xml_inspect", json!({"xml": doc})),
+    ] {
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new(name)
+                    .with_arguments(arguments(args)),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{name} rejected: {e}"));
+        assert_ne!(result.is_error, Some(true), "{name}: {result:?}");
+        assert!(result.structured_content.is_some(), "{name} unstructured");
+    }
+    let _ = client.cancel().await.expect("clean close");
 }

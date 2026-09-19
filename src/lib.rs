@@ -3,284 +3,43 @@
 
 //! `oxml-mcp` — a Model Context Protocol server for XML.
 //!
-//! Speaks JSON-RPC 2.0 over stdio, which is what MCP clients expect.
-//! Four tools: parse, query, validate, and inspect.
+//! Four tools: query, validate, check, and inspect. The protocol is
+//! handled by [`rmcp`], the official MCP SDK; this crate supplies the
+//! tools and the text a model reads.
 //!
 //! Why a model wants this: an LLM asked to pull a value out of a large
 //! XML document otherwise has to read the whole thing into its
 //! context and pattern-match by eye. An `XPath` tool turns that into a
 //! question with an exact answer, and the document never needs to fit
 //! in the context window.
+//!
+//! The four operations are plain functions -- [`query`], [`validate`],
+//! [`check`], [`inspect`] -- and [`XmlServer`] is the handler that
+//! exposes them as MCP tools. Each answer is returned twice: as text
+//! for the model, and as a structured value for a client that wants to
+//! read it without parsing prose.
 
 #![forbid(unsafe_code)]
 
-use std::fmt::Write as _;
-use std::io::{BufRead, Write};
+use std::collections::BTreeMap;
+use std::fmt;
 
-use oxml_json::{self as json, Json};
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::{ToolCallContext, schema_for_output};
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+    ErrorData, Implementation, ServerCapabilities, ServerConfig,
+};
+use rmcp::service::RequestContext;
+use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-/// The MCP revision this server implements.
+/// A parse failure, worded for a model.
 ///
-/// A client that speaks a different one is told this in the
-/// `initialize` reply and decides for itself whether to continue.
-pub const PROTOCOL_VERSION: &str = "2024-11-05";
-
-/// Serve the protocol over a byte stream until input ends.
-///
-/// This is the whole server: read a line, dispatch it, write at most
-/// one line back. It is generic over its two ends so that a test or a
-/// benchmark can drive it through an in-memory pipe, and `main` can
-/// hand it stdin and stdout.
-///
-/// A write failure ends the loop rather than being reported: the peer
-/// has gone, and there is nowhere left to report it to. Input that is
-/// not valid JSON is answered with a JSON-RPC error, not a
-/// disconnection -- one malformed line must not take down a session.
-pub fn serve<R: BufRead, W: Write>(input: R, mut output: W) {
-    for line in input.lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Some(response) = handle_line(&line) else {
-            // A notification: no id, so no reply. Responding anyway
-            // is a protocol error, not merely noise.
-            continue;
-        };
-        if writeln!(output, "{response}").is_err() {
-            break;
-        }
-        let _ = output.flush();
-    }
-}
-
-/// Dispatch one JSON-RPC line, returning the reply if there is one.
-///
-/// `None` means the line was a notification, which by JSON-RPC 2.0
-/// draws no response at all. Every other outcome -- including a
-/// malformed request or a tool that failed -- produces a reply, so a
-/// client is never left waiting.
-#[must_use]
-pub fn handle_line(line: &str) -> Option<String> {
-    let request = match json::parse(line) {
-        Ok(r) => r,
-        Err(e) => {
-            return Some(error_response(
-                &Json::Null,
-                -32700,
-                &format!("parse error: {e}"),
-            ));
-        }
-    };
-
-    // No id means a notification: no reply, even for a bad one.
-    let id = request.get("id").cloned()?;
-
-    let Some(method) = request.get("method").and_then(Json::as_str) else {
-        // An id was supplied, so silence would leave the client
-        // waiting for a response that is never coming.
-        return Some(error_response(&id, -32600, "missing method"));
-    };
-
-    Some(match method {
-        "initialize" => initialize(&id),
-        "tools/list" => tools_list(&id),
-        "tools/call" => tools_call(&id, &request),
-        other => {
-            error_response(&id, -32601, &format!("unknown method `{other}`"))
-        }
-    })
-}
-
-fn ok_response(id: &Json, result: Json) -> String {
-    Json::object(vec![
-        ("jsonrpc", Json::str("2.0")),
-        ("id", id.clone()),
-        ("result", result),
-    ])
-    .to_json()
-}
-
-fn error_response(id: &Json, code: i32, message: &str) -> String {
-    Json::object(vec![
-        ("jsonrpc", Json::str("2.0")),
-        ("id", id.clone()),
-        (
-            "error",
-            Json::object(vec![
-                ("code", Json::Number(f64::from(code))),
-                ("message", Json::str(message)),
-            ]),
-        ),
-    ])
-    .to_json()
-}
-
-fn initialize(id: &Json) -> String {
-    ok_response(
-        id,
-        Json::object(vec![
-            ("protocolVersion", Json::str(PROTOCOL_VERSION)),
-            (
-                "capabilities",
-                Json::object(vec![("tools", Json::object(vec![]))]),
-            ),
-            (
-                "serverInfo",
-                Json::object(vec![
-                    ("name", Json::str("oxml-mcp")),
-                    ("version", Json::str(env!("CARGO_PKG_VERSION"))),
-                ]),
-            ),
-        ]),
-    )
-}
-
-fn tool(
-    name: &str,
-    description: &str,
-    props: &[(&str, &str, &str)],
-    required: &[&str],
-) -> Json {
-    let properties: Vec<(&str, Json)> = props
-        .iter()
-        .map(|(n, ty, d)| {
-            (
-                *n,
-                Json::object(vec![
-                    ("type", Json::str(*ty)),
-                    ("description", Json::str(*d)),
-                ]),
-            )
-        })
-        .collect();
-    Json::object(vec![
-        ("name", Json::str(name)),
-        ("description", Json::str(description)),
-        (
-            "inputSchema",
-            Json::object(vec![
-                ("type", Json::str("object")),
-                ("properties", Json::object(properties)),
-                (
-                    "required",
-                    Json::Array(
-                        required.iter().map(|r| Json::str(*r)).collect(),
-                    ),
-                ),
-            ]),
-        ),
-    ])
-}
-
-fn tools_list(id: &Json) -> String {
-    ok_response(
-        id,
-        Json::object(vec![(
-            "tools",
-            Json::Array(vec![
-                tool(
-                    "xml_query",
-                    "Evaluate an XPath 1.0 expression against an XML \
-                     document and return the matching values. Use this \
-                     instead of reading a large document into context.",
-                    &[
-                        ("xml", "string", "The XML document"),
-                        ("xpath", "string", "An XPath 1.0 expression"),
-                        (
-                            "namespaces",
-                            "object",
-                            "Namespace prefixes used in the expression, \
-                             mapping prefix to URI, e.g. \
-                             {\"m\": \"urn:example\"}. A prefix must be \
-                             bound here; it is not read from the \
-                             document. Call xml_inspect to see which \
-                             namespaces a document uses.",
-                        ),
-                    ],
-                    &["xml", "xpath"],
-                ),
-                tool(
-                    "xml_validate",
-                    "Validate an XML document against an XML Schema \
-                     (XSD). Returns every violation with the path to \
-                     the element it concerns.",
-                    &[
-                        ("xml", "string", "The XML document"),
-                        ("xsd", "string", "The XML Schema"),
-                    ],
-                    &["xml", "xsd"],
-                ),
-                tool(
-                    "xml_check",
-                    "Check whether a document is well-formed, and \
-                     report the line and column if it is not.",
-                    &[("xml", "string", "The XML document")],
-                    &["xml"],
-                ),
-                tool(
-                    "xml_inspect",
-                    "Summarise a document's structure: element counts, \
-                     depth, the element names present, and the \
-                     namespaces it uses. Use this to understand a \
-                     document's shape before querying it.",
-                    &[("xml", "string", "The XML document")],
-                    &["xml"],
-                ),
-            ]),
-        )]),
-    )
-}
-
-fn text_result(text: String, is_error: bool) -> Json {
-    Json::object(vec![
-        (
-            "content",
-            Json::Array(vec![Json::object(vec![
-                ("type", Json::str("text")),
-                ("text", Json::String(text)),
-            ])]),
-        ),
-        ("isError", Json::Bool(is_error)),
-    ])
-}
-
-fn tools_call(id: &Json, request: &Json) -> String {
-    let Some(params) = request.get("params") else {
-        return error_response(id, -32602, "missing params");
-    };
-    let Some(name) = params.get("name").and_then(Json::as_str) else {
-        return error_response(id, -32602, "missing tool name");
-    };
-    let args = params.get("arguments").cloned().unwrap_or(Json::Null);
-    let arg = |k: &str| args.get(k).and_then(Json::as_str).unwrap_or("");
-
-    let result = match name {
-        "xml_query" => {
-            let namespaces = namespace_bindings(request);
-            run_query(arg("xml"), arg("xpath"), &namespaces)
-        }
-        "xml_validate" => run_validate(arg("xml"), arg("xsd")),
-        "xml_check" => run_check(arg("xml")),
-        "xml_inspect" => run_inspect(arg("xml")),
-        other => {
-            return error_response(
-                id,
-                -32602,
-                &format!("unknown tool `{other}`"),
-            );
-        }
-    };
-
-    ok_response(
-        id,
-        match result {
-            Ok(text) => text_result(text, false),
-            Err(text) => text_result(text, true),
-        },
-    )
-}
-
+/// The location is what makes the message actionable: a model told
+/// only that the document is malformed will guess at where.
 fn parse_doc(xml: &str) -> Result<oxml::Document, String> {
     oxml::parse(xml).map_err(|e| {
         let (line, col) = e.line_column(xml);
@@ -290,41 +49,57 @@ fn parse_doc(xml: &str) -> Result<oxml::Document, String> {
     })
 }
 
-/// The `namespaces` argument of a `tools/call` request.
-///
-/// A JSON object mapping prefix to URI. Absent is the same as empty,
-/// so a request that needs no namespaces is unchanged.
-fn namespace_bindings(request: &Json) -> Vec<(String, String)> {
-    let Some(Json::Object(object)) = request
-        .get("params")
-        .and_then(|p| p.get("arguments"))
-        .and_then(|a| a.get("namespaces"))
-    else {
-        return Vec::new();
-    };
-    object
-        .iter()
-        .filter_map(|(prefix, value)| {
-            // `xml` is bound by the specification; rebinding it is not
-            // something a caller may do, so it is ignored rather than
-            // failing a request over it.
-            if prefix == "xml" {
-                return None;
-            }
-            Some((prefix.clone(), value.as_str()?.to_owned()))
-        })
-        .collect()
+/// What an `XPath` expression selected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct QueryOutput {
+    /// How many nodes matched. A scalar expression counts as one.
+    pub count: usize,
+    /// The matched values in document order, empty text omitted. A
+    /// scalar expression -- a number, string or boolean -- is one
+    /// value.
+    pub values: Vec<String>,
 }
 
-fn run_query(
+impl fmt::Display for QueryOutput {
+    /// One value per line. When nothing matched, say so: an empty
+    /// string would read to a model as a successful query against an
+    /// empty document.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.count == 0 {
+            return f.write_str("No nodes matched.");
+        }
+        if self.values.is_empty() {
+            return write!(
+                f,
+                "{} node(s) matched, all with empty text.",
+                self.count
+            );
+        }
+        f.write_str(&self.values.join("\n"))
+    }
+}
+
+/// Evaluate an `XPath` 1.0 expression against a document.
+///
+/// `namespaces` binds the prefixes the expression uses; a prefix is
+/// never read from the document. The `xml` prefix is bound by the
+/// specification and a binding for it is ignored rather than refused.
+///
+/// # Errors
+///
+/// A document that is not well-formed, or an expression that does not
+/// compile, is reported as text a model can act on: the position of
+/// the fault, or the argument to pass for an unbound prefix.
+pub fn query(
     xml: &str,
     xpath: &str,
-    namespaces: &[(String, String)],
-) -> Result<String, String> {
+    namespaces: &[(&str, &str)],
+) -> Result<QueryOutput, String> {
     let doc = parse_doc(xml)?;
     let bindings: Vec<(&str, &str)> = namespaces
         .iter()
-        .map(|(prefix, uri)| (prefix.as_str(), uri.as_str()))
+        .copied()
+        .filter(|(prefix, _)| *prefix != "xml")
         .collect();
     let compiled = oxml::XPath::compile_with_namespaces(xpath, &bindings)
         .map_err(|e| {
@@ -347,24 +122,23 @@ fn run_query(
                     e.message
                 )
             }
-    })?;
+        })?;
     let value = compiled.evaluate(&doc);
 
     let Some(nodes) = value.nodes() else {
-        return Ok(value.to_str(&doc));
+        return Ok(QueryOutput {
+            count: 1,
+            values: vec![value.to_str(&doc)],
+        });
     };
-    if nodes.is_empty() {
-        return Ok("No nodes matched.".to_owned());
-    }
-    let lines: Vec<String> = nodes
+    let values: Vec<String> = nodes
         .iter()
         .map(|n| doc.text(*n))
         .filter(|t| !t.trim().is_empty())
         .collect();
-    Ok(if lines.is_empty() {
-        format!("{} node(s) matched, all with empty text.", nodes.len())
-    } else {
-        lines.join("\n")
+    Ok(QueryOutput {
+        count: nodes.len(),
+        values,
     })
 }
 
@@ -382,39 +156,147 @@ fn xpath_line_column(input: &str, offset: usize) -> (usize, usize) {
     (line, column)
 }
 
-fn run_validate(xml: &str, xsd: &str) -> Result<String, String> {
+/// One schema violation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct Violation {
+    /// The path to the element the violation concerns.
+    pub path: String,
+    /// What is wrong with it.
+    pub message: String,
+}
+
+/// The outcome of validating a document against a schema.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ValidateOutput {
+    /// Whether the document conforms to the schema.
+    pub valid: bool,
+    /// Every violation found; empty when the document is valid.
+    pub violations: Vec<Violation>,
+}
+
+impl fmt::Display for ValidateOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.valid {
+            return f.write_str("The document is valid against the schema.");
+        }
+        writeln!(f, "{} violation(s):", self.violations.len())?;
+        for v in &self.violations {
+            writeln!(f, "  {} — {}", v.path, v.message)?;
+        }
+        Ok(())
+    }
+}
+
+/// Validate a document against an XML Schema.
+///
+/// A document that violates the schema is a successful validation with
+/// `valid: false`; the violations are the answer.
+///
+/// # Errors
+///
+/// The schema could not be read, or the document is not well-formed.
+/// Neither is a validation result, because nothing was validated.
+pub fn validate(xml: &str, xsd: &str) -> Result<ValidateOutput, String> {
     let schema = xmlschema::parse_schema(xsd)
         .map_err(|e| format!("The schema could not be read: {e}"))?;
     let doc = parse_doc(xml)?;
     let report = xmlschema::validate(&doc, &schema);
-    if report.is_valid() {
-        return Ok("The document is valid against the schema.".to_owned());
-    }
-    let mut out = format!("{} violation(s):\n", report.violations.len());
-    for v in &report.violations {
-        let _ = writeln!(out, "  {} — {}", v.path, v.message);
-    }
-    Err(out)
+    Ok(ValidateOutput {
+        valid: report.is_valid(),
+        violations: report
+            .violations
+            .iter()
+            .map(|v| Violation {
+                path: v.path.clone(),
+                message: v.message.clone(),
+            })
+            .collect(),
+    })
 }
 
-fn run_check(xml: &str) -> Result<String, String> {
-    let doc = parse_doc(xml)?;
-    Ok(format!(
-        "The document is well-formed ({} nodes).",
-        doc.len()
-    ))
+/// A well-formed document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct CheckOutput {
+    /// Always true: a document that is not well-formed is an error,
+    /// not a result.
+    pub well_formed: bool,
+    /// How many nodes the document has.
+    pub nodes: usize,
 }
 
-fn run_inspect(xml: &str) -> Result<String, String> {
-    use std::collections::BTreeMap;
+impl fmt::Display for CheckOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "The document is well-formed ({} nodes).", self.nodes)
+    }
+}
+
+/// Check whether a document is well-formed.
+///
+/// # Errors
+///
+/// The document is not, and the message says where.
+pub fn check(xml: &str) -> Result<CheckOutput, String> {
     let doc = parse_doc(xml)?;
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    Ok(CheckOutput {
+        well_formed: true,
+        nodes: doc.len(),
+    })
+}
+
+/// The shape of a document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct InspectOutput {
+    /// The local name of the root element, or `none`.
+    pub root: String,
+    /// The deepest element, counting the root as 1.
+    pub max_depth: usize,
+    /// Every element name present, with how many times it occurs.
+    pub elements: BTreeMap<String, usize>,
+    /// Every namespace URI in use, with how many elements are in it.
+    pub namespaces: BTreeMap<String, usize>,
+}
+
+impl fmt::Display for InspectOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Root element: {}", self.root)?;
+        writeln!(f, "Maximum depth: {}", self.max_depth)?;
+        writeln!(f, "Elements:")?;
+        for (name, n) in &self.elements {
+            writeln!(f, "  {name}: {n}")?;
+        }
+        // A model cannot write a namespace-aware query against
+        // namespaces it cannot see, and an unbound prefix is an error
+        // rather than a silent match. Reporting them here is what
+        // makes the `namespaces` argument usable.
+        if self.namespaces.is_empty() {
+            writeln!(f, "Namespaces: none")
+        } else {
+            writeln!(
+                f,
+                "Namespaces (pass these to xml_query as `namespaces`):"
+            )?;
+            for (uri, n) in &self.namespaces {
+                writeln!(f, "  {uri}: {n} element(s)")?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Summarise a document's structure.
+///
+/// # Errors
+///
+/// The document is not well-formed.
+pub fn inspect(xml: &str) -> Result<InspectOutput, String> {
+    let doc = parse_doc(xml)?;
+    let mut elements: BTreeMap<String, usize> = BTreeMap::new();
     let mut namespaces: BTreeMap<String, usize> = BTreeMap::new();
-    let mut depth_max = 0usize;
+    let mut max_depth = 0usize;
 
     for id in doc.descendants() {
         if let Some(name) = doc.element_name(id) {
-            *counts.entry(name.local.clone()).or_default() += 1;
+            *elements.entry(name.local.clone()).or_default() += 1;
             if let Some(uri) = &name.namespace {
                 *namespaces.entry(uri.clone()).or_default() += 1;
             }
@@ -424,7 +306,7 @@ fn run_inspect(xml: &str) -> Result<String, String> {
                 cur = doc.parent(n);
                 d += 1;
             }
-            depth_max = depth_max.max(d);
+            max_depth = max_depth.max(d);
         }
     }
 
@@ -433,197 +315,402 @@ fn run_inspect(xml: &str) -> Result<String, String> {
         .and_then(|r| doc.element_name(r))
         .map_or_else(|| "none".to_owned(), |n| n.local.clone());
 
-    let mut out = format!(
-        "Root element: {root}\nMaximum depth: {depth_max}\nElements:\n"
-    );
-    for (name, n) in counts {
-        let _ = writeln!(out, "  {name}: {n}");
-    }
-    // A model cannot write a namespace-aware query against namespaces
-    // it cannot see, and from oxml 0.0.4 an unbound prefix is an error
-    // rather than a silent match. Reporting them here is what makes the
-    // `namespaces` argument usable.
-    if namespaces.is_empty() {
-        let _ = writeln!(out, "Namespaces: none");
-    } else {
-        let _ = writeln!(
-            out,
-            "Namespaces (pass these to xml_query as `namespaces`):"
-        );
-        for (uri, n) in namespaces {
-            let _ = writeln!(out, "  {uri}: {n} element(s)");
+    Ok(InspectOutput {
+        root,
+        max_depth,
+        elements,
+        namespaces,
+    })
+}
+
+// The doc comments on the argument structs are the descriptions a
+// client shows the model, kept word for word from the previous
+// release; backticks would change them. The examples are what an
+// auditor or a client with no document of its own sends: a string that
+// happens to be XML rather than one that happens not to be.
+
+/// Arguments of `xml_query`.
+#[allow(clippy::doc_markdown, reason = "tool descriptions, shown verbatim")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct QueryArgs {
+    /// The XML document
+    #[schemars(example = &"<library><book lang=\"en\"><title>Dune</title></book></library>")]
+    pub xml: String,
+    /// An XPath 1.0 expression
+    #[schemars(example = &"//book/title")]
+    pub xpath: String,
+    /// Namespace prefixes used in the expression, mapping prefix to
+    /// URI, e.g. {"m": "urn:example"}. A prefix must be bound here; it
+    /// is not read from the document. Call xml_inspect to see which
+    /// namespaces a document uses.
+    #[serde(default)]
+    pub namespaces: BTreeMap<String, String>,
+}
+
+/// Arguments of `xml_validate`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateArgs {
+    /// The XML document
+    #[schemars(example = &"<library><book lang=\"en\"><title>Dune</title></book></library>")]
+    pub xml: String,
+    /// The XML Schema
+    #[schemars(example = &"<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"><xs:element name=\"library\"/></xs:schema>")]
+    pub xsd: String,
+}
+
+/// Arguments of `xml_check` and `xml_inspect`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DocumentArgs {
+    /// The XML document
+    #[schemars(example = &"<library><book lang=\"en\"><title>Dune</title></book></library>")]
+    pub xml: String,
+}
+
+/// A tool result carrying the same answer twice: as text for the
+/// model and as a structured value for the client.
+///
+/// A failure keeps the text only. The structured schema describes a
+/// result, and an error is not one.
+fn reply<T: Serialize + fmt::Display>(
+    outcome: Result<T, String>,
+    is_error: impl FnOnce(&T) -> bool,
+) -> Result<CallToolResult, ErrorData> {
+    match outcome {
+        Ok(value) => {
+            let structured = serde_json::to_value(&value)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            let content = vec![ContentBlock::text(value.to_string())];
+            let mut result = if is_error(&value) {
+                CallToolResult::error(content)
+            } else {
+                CallToolResult::success(content)
+            };
+            result.structured_content = Some(structured);
+            Ok(result)
+        }
+        // A tool that ran and could not do the job: a *successful*
+        // JSON-RPC response carrying `isError`, so the model sees the
+        // text and can react to it. A JSON-RPC error would be handled
+        // by the client and never shown.
+        Err(message) => {
+            Ok(CallToolResult::error(vec![ContentBlock::text(message)]))
         }
     }
-    Ok(out)
+}
+
+/// The MCP server: the four tools over [`rmcp`].
+///
+/// Cheap to create and to clone; the HTTP transports create one per
+/// session. It holds no document between calls.
+#[derive(Debug, Clone)]
+pub struct XmlServer {
+    tool_router: ToolRouter<Self>,
+}
+
+impl Default for XmlServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[tool_router]
+#[allow(
+    clippy::unused_self,
+    reason = "the SDK's tool router calls tools as methods"
+)]
+impl XmlServer {
+    /// A server with all four tools registered.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    #[tool(
+        name = "xml_query",
+        description = "Evaluate an XPath 1.0 expression against an XML \
+                       document and return the matching values. Use this \
+                       instead of reading a large document into context.",
+        annotations(
+            title = "Query XML with XPath",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
+        output_schema = schema_for_output::<QueryOutput>()
+    )]
+    fn xml_query(
+        &self,
+        Parameters(args): Parameters<QueryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let namespaces: Vec<(&str, &str)> = args
+            .namespaces
+            .iter()
+            .map(|(p, u)| (p.as_str(), u.as_str()))
+            .collect();
+        reply(query(&args.xml, &args.xpath, &namespaces), |_| false)
+    }
+
+    #[tool(
+        name = "xml_validate",
+        description = "Validate an XML document against an XML Schema \
+                       (XSD). Returns every violation with the path to \
+                       the element it concerns.",
+        annotations(
+            title = "Validate XML against an XSD",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
+        output_schema = schema_for_output::<ValidateOutput>()
+    )]
+    fn xml_validate(
+        &self,
+        Parameters(args): Parameters<ValidateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // A violation is a tool failure the model must see, so it is
+        // flagged `isError` -- but it is also a complete validation
+        // result, so the structured half is kept.
+        reply(validate(&args.xml, &args.xsd), |v| !v.valid)
+    }
+
+    #[tool(
+        name = "xml_check",
+        description = "Check whether a document is well-formed, and \
+                       report the line and column if it is not.",
+        annotations(
+            title = "Check XML well-formedness",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
+        output_schema = schema_for_output::<CheckOutput>()
+    )]
+    fn xml_check(
+        &self,
+        Parameters(args): Parameters<DocumentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        reply(check(&args.xml), |_| false)
+    }
+
+    #[tool(
+        name = "xml_inspect",
+        description = "Summarise a document's structure: element counts, \
+                       depth, the element names present, and the \
+                       namespaces it uses. Use this to understand a \
+                       document's shape before querying it.",
+        annotations(
+            title = "Inspect XML structure",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
+        output_schema = schema_for_output::<InspectOutput>()
+    )]
+    fn xml_inspect(
+        &self,
+        Parameters(args): Parameters<DocumentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        reply(inspect(&args.xml), |_| false)
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "the SDK's handler macro generates the trait methods"
+)]
+impl ServerHandler for XmlServer {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(
+                Implementation::new("oxml-mcp", env!("CARGO_PKG_VERSION"))
+                    .with_title("oxml MCP")
+                    .with_website_url(env!("CARGO_PKG_REPOSITORY")),
+            )
+            .with_instructions(
+                "XML tools. Documents are passed as strings, never as \
+                 paths. xml_inspect reports a document's element names \
+                 and namespaces; xml_query evaluates XPath 1.0 against \
+                 it; xml_check reports well-formedness; xml_validate \
+                 checks it against an XSD.",
+            )
+    }
+
+    /// A tool the server does not have is reported as a tool result,
+    /// not a protocol error.
+    ///
+    /// The SDK's default is `-32602`, which the stateless HTTP revision
+    /// carries as an HTTP 400 -- a transport fault to the client, and
+    /// nothing a model gets to read. A model that misspelt a tool name
+    /// is better served by text saying so.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        if !self.tool_router.has_route(&request.name) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                format!(
+                    "Unknown tool: {}. The tools are xml_query, xml_validate, \
+                 xml_check and xml_inspect.",
+                    request.name
+                ),
+            )])
+            .into());
+        }
+        let call = ToolCallContext::new(self, request, context);
+        self.tool_router.call(call).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
 
     const DOC: &str = "<library><book lang=\"en\"><title>Dune</title>\
                        </book><book lang=\"fr\"><title>Germinal</title>\
                        </book></library>";
 
-    /// Drive the server exactly as a client does: one line in, at most
-    /// one line out, both parsed as JSON.
-    fn call(line: &str) -> Option<Json> {
-        let out = handle_line(line)?;
-        assert!(!out.contains('\n'), "response spans lines: {out}");
-        Some(json::parse(&out).expect("response is valid JSON"))
+    /// Call a tool the way a request reaches it: JSON arguments,
+    /// deserialised into the tool's parameter type.
+    fn parse<T: serde::de::DeserializeOwned>(v: Value) -> T {
+        serde_json::from_value(v).expect("arguments")
     }
 
-    fn request(id: i32, method: &str, params: Json) -> String {
-        Json::object(vec![
-            ("jsonrpc", Json::str("2.0")),
-            ("id", Json::Number(f64::from(id))),
-            ("method", Json::str(method)),
-            ("params", params),
-        ])
-        .to_json()
-    }
-
-    fn tool_call(tool: &str, args: Vec<(&str, Json)>) -> Json {
-        call(&request(
-            1,
-            "tools/call",
-            Json::object(vec![
-                ("name", Json::str(tool)),
-                ("arguments", Json::object(args)),
-            ]),
-        ))
-        .expect("a call has an id, so it has a response")
-    }
-
-    fn text_of(response: &Json) -> &str {
-        let Some(Json::Array(content)) =
-            response.get("result").and_then(|r| r.get("content"))
-        else {
-            panic!("no content in {}", response.to_json());
+    fn call(tool: &str, args: Value) -> CallToolResult {
+        let server = XmlServer::new();
+        let result = match tool {
+            "xml_query" => server.xml_query(Parameters(parse(args))),
+            "xml_validate" => server.xml_validate(Parameters(parse(args))),
+            "xml_check" => server.xml_check(Parameters(parse(args))),
+            "xml_inspect" => server.xml_inspect(Parameters(parse(args))),
+            other => panic!("no such tool {other}"),
         };
-        content[0].get("text").and_then(Json::as_str).expect("text")
+        result.expect("a tool failure is a result, not a protocol error")
     }
 
-    fn is_error(response: &Json) -> bool {
-        matches!(
-            response.get("result").and_then(|r| r.get("isError")),
-            Some(Json::Bool(true))
-        )
+    fn text_of(r: &CallToolResult) -> &str {
+        r.content
+            .first()
+            .and_then(ContentBlock::as_text)
+            .map(|t| t.text.as_str())
+            .expect("text content")
     }
 
-    #[test]
-    fn initialize_reports_the_protocol_version() {
-        let r = call(&request(1, "initialize", Json::Null)).expect("reply");
-        assert_eq!(r.get("jsonrpc").and_then(Json::as_str), Some("2.0"));
-        assert_eq!(
-            r.get("result")
-                .and_then(|x| x.get("protocolVersion"))
-                .and_then(Json::as_str),
-            Some("2024-11-05")
-        );
+    fn is_error(r: &CallToolResult) -> bool {
+        r.is_error == Some(true)
     }
 
     #[test]
-    fn the_response_id_matches_the_request_id() {
-        // Clients correlate on this; a mismatch hangs the caller.
-        let r = call(&request(42, "initialize", Json::Null)).expect("reply");
-        assert_eq!(r.get("id"), Some(&Json::Number(42.0)));
-
-        let s = handle_line(
-            r#"{"jsonrpc":"2.0","id":"abc","method":"initialize"}"#,
-        )
-        .expect("reply");
-        let s = json::parse(&s).expect("valid");
-        assert_eq!(s.get("id").and_then(Json::as_str), Some("abc"));
-    }
-
-    #[test]
-    fn tools_list_advertises_every_implemented_tool() {
-        let r = call(&request(1, "tools/list", Json::Null)).expect("reply");
-        let Some(Json::Array(tools)) =
-            r.get("result").and_then(|x| x.get("tools"))
-        else {
-            panic!("no tools array");
-        };
-        let names: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t.get("name")?.as_str())
-            .collect();
+    fn every_tool_is_registered_with_schema_and_annotations() {
+        let tools = XmlServer::tool_router().list_all();
+        let mut names: Vec<&str> =
+            tools.iter().map(|t| t.name.as_ref()).collect();
+        names.sort_unstable();
         assert_eq!(
             names,
-            ["xml_query", "xml_validate", "xml_check", "xml_inspect"]
+            ["xml_check", "xml_inspect", "xml_query", "xml_validate"]
         );
-        // An advertised tool with no schema is unusable to a client.
-        for t in tools {
-            assert!(t.get("description").is_some());
-            let schema = t.get("inputSchema").expect("inputSchema");
+        for t in &tools {
+            assert!(t.description.is_some(), "{} has no description", t.name);
             assert_eq!(
-                schema.get("type").and_then(Json::as_str),
+                t.input_schema.get("type").and_then(Value::as_str),
                 Some("object")
             );
-            assert!(schema.get("properties").is_some());
-            assert!(schema.get("required").is_some());
+            assert!(t.input_schema.get("properties").is_some());
+            assert!(
+                t.output_schema.is_some(),
+                "{} has no outputSchema",
+                t.name
+            );
+            let a = t.annotations.as_ref().expect("annotations");
+            assert_eq!(a.read_only_hint, Some(true), "{}", t.name);
         }
     }
 
     #[test]
-    fn every_advertised_tool_is_callable() {
-        // Guards the pairing between `tools_list` and `tools_call`:
-        // the two lists are written out separately.
-        for tool in ["xml_query", "xml_validate", "xml_check", "xml_inspect"] {
-            let r = tool_call(tool, vec![("xml", Json::str(DOC))]);
-            assert!(
-                r.get("result").is_some(),
-                "{tool} was advertised but rejected: {}",
-                r.to_json()
-            );
-        }
+    fn input_schemas_keep_the_field_names_and_descriptions() {
+        let tools = XmlServer::tool_router().list_all();
+        let query =
+            tools.iter().find(|t| t.name == "xml_query").expect("query");
+        let props = query.input_schema.get("properties").expect("properties");
+        assert_eq!(
+            props["xml"]["description"].as_str(),
+            Some("The XML document")
+        );
+        assert_eq!(
+            props["xpath"]["description"].as_str(),
+            Some("An XPath 1.0 expression")
+        );
+        assert!(
+            props["namespaces"]["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("xml_inspect")),
+            "{props}"
+        );
+        assert_eq!(props["namespaces"]["type"].as_str(), Some("object"));
+        let required =
+            query.input_schema["required"].as_array().expect("required");
+        assert_eq!(required, &[json!("xml"), json!("xpath")]);
     }
 
     #[test]
     fn xml_query_returns_the_selected_text() {
-        let r = tool_call(
-            "xml_query",
-            vec![
-                ("xml", Json::str(DOC)),
-                ("xpath", Json::str("//book[1]/title")),
-            ],
-        );
+        let r =
+            call("xml_query", json!({"xml": DOC, "xpath": "//book[1]/title"}));
         assert!(!is_error(&r));
         assert!(text_of(&r).contains("Dune"), "{}", text_of(&r));
+        assert_eq!(
+            r.structured_content,
+            Some(json!({"count": 1, "values": ["Dune"]}))
+        );
     }
 
     #[test]
     fn xml_query_reads_attributes() {
-        let r = tool_call(
-            "xml_query",
-            vec![
-                ("xml", Json::str(DOC)),
-                ("xpath", Json::str("//book[2]/@lang")),
-            ],
-        );
+        let r =
+            call("xml_query", json!({"xml": DOC, "xpath": "//book[2]/@lang"}));
         assert!(!is_error(&r));
         assert!(text_of(&r).contains("fr"), "{}", text_of(&r));
     }
 
     #[test]
     fn xml_check_accepts_and_rejects() {
-        let good = tool_call("xml_check", vec![("xml", Json::str(DOC))]);
+        let good = call("xml_check", json!({"xml": DOC}));
         assert!(!is_error(&good));
+        assert_eq!(
+            good.structured_content,
+            Some(json!({"well_formed": true, "nodes": 11}))
+        );
 
-        let bad =
-            tool_call("xml_check", vec![("xml", Json::str("<a><b></a>"))]);
-        assert!(is_error(&bad), "{}", bad.to_json());
+        let bad = call("xml_check", json!({"xml": "<a><b></a>"}));
+        assert!(is_error(&bad));
         // The position is what makes the message actionable.
-        assert!(text_of(&bad).contains(':'), "{}", text_of(&bad));
+        assert!(
+            text_of(&bad).contains("line 1, column"),
+            "{}",
+            text_of(&bad)
+        );
+        assert!(bad.structured_content.is_none());
     }
 
     #[test]
     fn xml_inspect_summarises_the_document() {
-        let r = tool_call("xml_inspect", vec![("xml", Json::str(DOC))]);
+        let r = call("xml_inspect", json!({"xml": DOC}));
         let text = text_of(&r);
-        assert!(text.contains("library"), "{text}");
+        assert!(text.contains("Root element: library"), "{text}");
         assert!(text.contains("book: 2"), "{text}");
+        let s = r.structured_content.expect("structured");
+        assert_eq!(s["root"], "library");
+        assert_eq!(s["max_depth"], 4);
+        assert_eq!(s["elements"]["book"], 2);
     }
 
     #[test]
@@ -631,23 +718,31 @@ mod tests {
         let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
             <xs:element name="note" type="xs:string"/>
         </xs:schema>"#;
-        let ok = tool_call(
+        let ok = call(
             "xml_validate",
-            vec![
-                ("xml", Json::str("<note>hi</note>")),
-                ("xsd", Json::str(xsd)),
-            ],
+            json!({"xml": "<note>hi</note>", "xsd": xsd}),
         );
-        assert!(!is_error(&ok), "{}", ok.to_json());
+        assert!(!is_error(&ok), "{ok:?}");
+        assert_eq!(
+            ok.structured_content,
+            Some(json!({"valid": true, "violations": []}))
+        );
 
-        let bad = tool_call(
+        let bad = call(
             "xml_validate",
-            vec![
-                ("xml", Json::str("<wrong>hi</wrong>")),
-                ("xsd", Json::str(xsd)),
-            ],
+            json!({"xml": "<wrong>hi</wrong>", "xsd": xsd}),
         );
-        assert!(is_error(&bad), "{}", bad.to_json());
+        assert!(is_error(&bad), "{bad:?}");
+        assert!(text_of(&bad).contains("violation(s)"), "{}", text_of(&bad));
+        // A violation is still a complete validation result.
+        let s = bad.structured_content.expect("structured");
+        assert_eq!(s["valid"], false);
+        assert!(!s["violations"].as_array().expect("array").is_empty());
+
+        let unreadable =
+            call("xml_validate", json!({"xml": "<a/>", "xsd": "<"}));
+        assert!(is_error(&unreadable));
+        assert!(text_of(&unreadable).contains("schema could not be read"));
     }
 
     #[test]
@@ -655,121 +750,25 @@ mod tests {
         // MCP distinguishes the two: a bad *document* must come back as
         // isError content so the model can read and react to it, not as
         // a JSON-RPC error that the client surfaces as a transport fault.
-        let r = tool_call("xml_check", vec![("xml", Json::str("<a>"))]);
-        assert!(r.get("error").is_none(), "{}", r.to_json());
+        let r = XmlServer::new().xml_check(Parameters(DocumentArgs {
+            xml: "<a>".to_owned(),
+        }));
+        let r = r.expect("Ok, not Err");
         assert!(is_error(&r));
     }
 
     #[test]
-    fn notifications_get_no_reply() {
-        // Replying to a notification is a protocol violation.
-        assert!(
-            handle_line(r#"{"jsonrpc":"2.0","method":"initialize"}"#).is_none()
-        );
-        assert!(
-            handle_line(
-                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn malformed_input_gets_a_parse_error_not_a_panic() {
-        let r = call("not json at all").expect("reply");
-        assert_eq!(
-            r.get("error").and_then(|e| e.get("code")),
-            Some(&Json::Number(-32700.0))
-        );
-        // A parse error has no id to echo, so it must be null.
-        assert_eq!(r.get("id"), Some(&Json::Null));
-    }
-
-    #[test]
-    fn a_request_without_a_method_is_an_invalid_request() {
-        // It has an id, so the client is waiting for a response.
-        let r = call(r#"{"jsonrpc":"2.0","id":7}"#).expect("reply");
-        assert_eq!(
-            r.get("error").and_then(|e| e.get("code")),
-            Some(&Json::Number(-32600.0))
-        );
-        assert_eq!(r.get("id"), Some(&Json::Number(7.0)));
-    }
-
-    #[test]
-    fn unknown_methods_and_tools_are_rejected_distinctly() {
-        let m = call(&request(1, "no/such", Json::Null)).expect("reply");
-        assert_eq!(
-            m.get("error").and_then(|e| e.get("code")),
-            Some(&Json::Number(-32601.0))
-        );
-
-        let t = tool_call("no_such_tool", vec![]);
-        assert_eq!(
-            t.get("error").and_then(|e| e.get("code")),
-            Some(&Json::Number(-32602.0))
-        );
-    }
-
-    #[test]
-    fn missing_params_and_arguments_do_not_panic() {
-        let r = call(&request(1, "tools/call", Json::Null));
-        assert!(r.expect("reply").get("error").is_some());
-
-        // `arguments` omitted entirely: every argument reads as empty.
-        let r = call(&request(
-            1,
-            "tools/call",
-            Json::object(vec![("name", Json::str("xml_check"))]),
-        ))
-        .expect("reply");
-        assert!(is_error(&r), "{}", r.to_json());
-    }
-
-    #[test]
-    fn control_characters_in_a_document_survive_the_round_trip() {
-        // An unescaped control character would corrupt the whole line,
-        // and this is the layer that decides.
-        //
-        // U+0001 is not a legal XML character, so the document is
-        // rejected -- correctly, and that is not what this test is
-        // about. What matters is that the *reply* comes back as one
-        // well-formed line with nothing raw in it, whichever way the
-        // parse went.
-        let r = tool_call(
-            "xml_check",
-            vec![("xml", Json::str("<a>\u{1}\u{7}</a>"))],
-        );
-        let line = r.to_json();
-        assert!(!line.contains('\n'), "reply must be one line");
-        assert!(
-            !line.chars().any(char::is_control),
-            "no raw control character may reach the transport: {line:?}"
-        );
-        assert!(crate::json::parse(&line).is_ok(), "reply must parse");
-
-        // A tab *is* legal, and must survive escaped rather than
-        // splitting or corrupting the line.
-        let r = tool_call("xml_check", vec![("xml", Json::str("<a>\t</a>"))]);
-        assert!(!is_error(&r), "{}", r.to_json());
-    }
-
-    #[test]
     fn a_bound_prefix_selects_only_that_namespace() {
-        // From oxml 0.0.4 a prefix resolves against bindings supplied
-        // with the query, not against the document.
+        // A prefix resolves against bindings supplied with the query,
+        // not against the document.
         let xml =
             r#"<r xmlns:m="urn:u"><m:item>ns</m:item><item>plain</item></r>"#;
-        let r = tool_call(
+        let r = call(
             "xml_query",
-            vec![
-                ("xml", Json::str(xml)),
-                ("xpath", Json::str("//m:item")),
-                ("namespaces", Json::object(vec![("m", Json::str("urn:u"))])),
-            ],
+            json!({"xml": xml, "xpath": "//m:item", "namespaces": {"m": "urn:u"}}),
         );
-        assert!(!is_error(&r), "{}", r.to_json());
-        assert!(r.to_json().contains("ns"), "{}", r.to_json());
+        assert!(!is_error(&r), "{r:?}");
+        assert_eq!(text_of(&r), "ns");
     }
 
     #[test]
@@ -778,32 +777,28 @@ mod tests {
         // to a model. The reply must name the argument to pass and the
         // tool that reveals what to put in it.
         let xml = r#"<r xmlns:m="urn:u"><m:item>ns</m:item></r>"#;
-        let r = tool_call(
-            "xml_query",
-            vec![("xml", Json::str(xml)), ("xpath", Json::str("//m:item"))],
-        );
+        let r = call("xml_query", json!({"xml": xml, "xpath": "//m:item"}));
         assert!(is_error(&r));
-        let text = r.to_json();
+        let text = text_of(&r);
         assert!(text.contains("namespaces"), "{text}");
         assert!(text.contains("xml_inspect"), "{text}");
     }
 
     #[test]
     fn inspect_reports_the_namespaces_a_document_uses() {
-        // A model cannot write a namespace-aware query against
-        // namespaces it cannot see.
         let xml = r#"<r xmlns:m="urn:u"><m:item>ns</m:item></r>"#;
-        let r = tool_call("xml_inspect", vec![("xml", Json::str(xml))]);
-        assert!(r.to_json().contains("urn:u"), "{}", r.to_json());
-
-        let plain = tool_call(
-            "xml_inspect",
-            vec![("xml", Json::str("<r><item/></r>"))],
+        let r = call("xml_inspect", json!({"xml": xml}));
+        assert!(text_of(&r).contains("urn:u"), "{}", text_of(&r));
+        assert_eq!(
+            r.structured_content.expect("structured")["namespaces"]["urn:u"],
+            1
         );
+
+        let plain = call("xml_inspect", json!({"xml": "<r><item/></r>"}));
         assert!(
-            plain.to_json().contains("Namespaces: none"),
+            text_of(&plain).contains("Namespaces: none"),
             "{}",
-            plain.to_json()
+            text_of(&plain)
         );
     }
 
@@ -812,96 +807,61 @@ mod tests {
         // Bound by the specification; a binding that tries is ignored
         // rather than failing the request.
         let xml = r#"<r><a xml:lang="en">x</a></r>"#;
-        let r = tool_call(
+        let r = call(
             "xml_query",
-            vec![
-                ("xml", Json::str(xml)),
-                ("xpath", Json::str("//@xml:lang")),
-                (
-                    "namespaces",
-                    Json::object(vec![("xml", Json::str("urn:wrong"))]),
-                ),
-            ],
+            json!({"xml": xml, "xpath": "//@xml:lang", "namespaces": {"xml": "urn:wrong"}}),
         );
-        assert!(!is_error(&r), "{}", r.to_json());
-        assert!(r.to_json().contains("en"), "{}", r.to_json());
-    }
-
-    #[test]
-    fn responses_are_always_a_single_line() {
-        // The transport is line-delimited: an embedded newline splits
-        // one response into two unparseable halves.
-        let r = handle_line(&request(
-            1,
-            "tools/call",
-            Json::object(vec![
-                ("name", Json::str("xml_check")),
-                (
-                    "arguments",
-                    Json::object(vec![(
-                        "xml",
-                        Json::str("<a>\nline\ntwo\n</a>"),
-                    )]),
-                ),
-            ]),
-        ))
-        .expect("reply");
-        assert!(!r.contains('\n'), "{r}");
+        assert!(!is_error(&r), "{r:?}");
+        assert_eq!(text_of(&r), "en");
     }
 
     #[test]
     fn a_scalar_expression_returns_its_value() {
         // Not a node-set: the value is the answer, and returning an
         // empty match here would be wrong.
-        let r = tool_call(
-            "xml_query",
-            vec![
-                ("xml", Json::str(DOC)),
-                ("xpath", Json::str("count(//book)")),
-            ],
-        );
+        let r =
+            call("xml_query", json!({"xml": DOC, "xpath": "count(//book)"}));
         assert!(!is_error(&r));
         assert_eq!(text_of(&r).trim(), "2");
+        assert_eq!(
+            r.structured_content,
+            Some(json!({"count": 1, "values": ["2"]}))
+        );
     }
 
     #[test]
     fn a_query_matching_nothing_says_so() {
-        // An empty string would read to the model as a successful query
-        // against an empty document.
-        let r = tool_call(
-            "xml_query",
-            vec![
-                ("xml", Json::str(DOC)),
-                ("xpath", Json::str("//nonexistent")),
-            ],
-        );
+        let r =
+            call("xml_query", json!({"xml": DOC, "xpath": "//nonexistent"}));
         assert!(!is_error(&r));
         assert!(text_of(&r).contains("No nodes matched"), "{}", text_of(&r));
+        assert_eq!(
+            r.structured_content,
+            Some(json!({"count": 0, "values": []}))
+        );
     }
 
     #[test]
     fn matches_with_no_text_report_the_count_instead() {
         // Empty elements match but have nothing to show; silence would
         // be indistinguishable from no match at all.
-        let r = tool_call(
+        let r = call(
             "xml_query",
-            vec![
-                ("xml", Json::str("<r><e/><e/></r>")),
-                ("xpath", Json::str("//e")),
-            ],
+            json!({"xml": "<r><e/><e/></r>", "xpath": "//e"}),
         );
         assert!(!is_error(&r));
         let text = text_of(&r);
         assert!(text.contains('2'), "{text}");
         assert!(text.contains("empty text"), "{text}");
+        assert_eq!(
+            r.structured_content,
+            Some(json!({"count": 2, "values": []}))
+        );
     }
 
     #[test]
     fn an_invalid_xpath_is_reported_as_such() {
-        let r = tool_call(
-            "xml_query",
-            vec![("xml", Json::str(DOC)), ("xpath", Json::str("//["))],
-        );
+        let r = call("xml_query", json!({"xml": DOC, "xpath": "//["}));
         assert!(is_error(&r));
         assert!(
             text_of(&r)
@@ -913,12 +873,9 @@ mod tests {
 
     #[test]
     fn an_invalid_multiline_xpath_reports_expression_line_and_column() {
-        let r = tool_call(
+        let r = call(
             "xml_query",
-            vec![
-                ("xml", Json::str(DOC)),
-                ("xpath", Json::str("//book[\n@lang = ]")),
-            ],
+            json!({"xml": DOC, "xpath": "//book[\n@lang = ]"}),
         );
         assert!(is_error(&r));
         assert!(
@@ -930,25 +887,31 @@ mod tests {
     }
 
     #[test]
-    fn a_call_without_params_is_an_invalid_params_error() {
-        let r = call(&request(1, "tools/call", Json::Null)).expect("reply");
-        assert_eq!(
-            r.get("error").and_then(|e| e.get("code")),
-            Some(&Json::Number(-32602.0))
-        );
+    fn xpath_positions_stop_at_character_boundaries() {
+        // An offset inside a multi-byte character must not slice the
+        // string mid-character.
+        assert_eq!(xpath_line_column("é", 1), (1, 1));
+        assert_eq!(xpath_line_column("ab", 9), (1, 3));
     }
 
     #[test]
-    fn a_call_without_a_tool_name_is_rejected() {
-        let r = call(&request(
-            1,
-            "tools/call",
-            Json::object(vec![("arguments", Json::object(vec![]))]),
-        ))
-        .expect("reply");
-        assert_eq!(
-            r.get("error").and_then(|e| e.get("code")),
-            Some(&Json::Number(-32602.0))
-        );
+    fn a_control_character_is_rejected_with_a_location() {
+        // U+0001 is not a legal XML character; the reply must still be
+        // a readable message, not a panic.
+        let r = call("xml_check", json!({"xml": "<a>\u{1}</a>"}));
+        assert!(is_error(&r));
+        assert!(text_of(&r).contains("line 1"), "{}", text_of(&r));
+        // A tab *is* legal.
+        let r = call("xml_check", json!({"xml": "<a>\t</a>"}));
+        assert!(!is_error(&r), "{r:?}");
+    }
+
+    #[test]
+    fn the_server_describes_itself() {
+        let info = XmlServer::default().get_info();
+        assert_eq!(info.server_info.name, "oxml-mcp");
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+        assert!(info.capabilities.tools.is_some());
+        assert!(info.instructions.is_some());
     }
 }

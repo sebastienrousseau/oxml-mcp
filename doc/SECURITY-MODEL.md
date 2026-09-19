@@ -6,15 +6,15 @@ Two hostile inputs, not one.
 
 **The document**, because a model was asked to look at something from
 the internet. **The JSON around it**, because that is the program's
-entire input and it arrives on stdin from a process this one does not
-control.
+entire input and it arrives from a process this one does not control
+-- on stdin, or over an HTTP listener that does not authenticate.
 
 ## The document
 
 - **External entities are never dereferenced.** A document containing
   `<!ENTITY xxe SYSTEM "file:///etc/passwd">` cannot make the server
-  read that file. There is no code that opens a file or a socket, so
-  there is no option to get wrong. Asserted in
+  read that file. The tools have no code that opens a file or a
+  socket, so there is no option to get wrong. Asserted in
   [`examples/errors.sh`](../examples/errors.sh).
 - **Entity expansion is bounded per document**, not per reference, so
   neither the exponential nor the quadratic blowup gets through.
@@ -27,26 +27,42 @@ Full reasoning:
 
 ## The JSON
 
-`src/json.rs` is hand-written, about 300 lines, and has no
-dependencies. For a program whose whole input is untrusted JSON, a
-dependency tree is a liability.
+The JSON-RPC and MCP layers belong to `rmcp`, the official SDK, which
+is fuzzed and conformance-tested upstream and is the same code every
+other Rust MCP server runs. Tool arguments are deserialised into typed
+structs: a missing or mistyped argument is refused with `-32602`
+before any tool runs.
 
-Malformed JSON is answered with `-32700` and the server keeps reading.
-It does not exit — a server that did could be killed by anything able
-to write a byte to its stdin.
+Malformed input does not end the session. Over HTTP it is refused with
+`400`; over stdio the line is skipped. A server that exited on it
+could be killed by anything able to write a byte to it.
+
+## The listener
+
+`--transport streamable-http` and `--transport sse` open a TCP
+listener. It binds `127.0.0.1` unless `--host` says otherwise, and it
+does not authenticate: a routable deployment belongs behind a gateway
+that does. The SDK refuses a `Host` header it does not expect, which
+stops a page in a browser from reaching a local server through DNS
+rebinding; binding every interface turns that check off, because
+there is then no name to check against.
 
 ## What the server cannot do
 
 - **Open a file.** Tools take document contents, never paths. A server
   that took paths would be a way to read any file the process can.
-- **Make a network request.** No network code exists in the dependency
-  tree.
+- **Make a network request.** The tools contain no network code. The
+  listener answers requests; nothing in the process opens a
+  connection outward.
 - **Remember anything.** No state between calls, so nothing leaks
-  between sessions and there is no cache to poison.
+  between sessions and there is no cache to poison. An HTTP session is
+  a routing key, not a store.
 
 ## Memory safety
 
-`#![forbid(unsafe_code)]`, and no C dependency anywhere.
+`#![forbid(unsafe_code)]` in this crate. The dependency tree is the
+SDK's -- `tokio`, `axum`, `serde` -- audited by `cargo audit` and
+`cargo deny` in CI.
 
 ## What it does not protect you from
 

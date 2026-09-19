@@ -3,13 +3,33 @@
 # A full session: initialise, list the tools, then call each one.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-call "initialize reports the MCP protocol version" \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-  '"protocolVersion":"2024-11-05"'
+call_raw "initialize reports the MCP protocol version" \
+  "$INITIALIZE" \
+  -- '"protocolVersion":"2025-11-25"'
+
+# A client pinned to the older revision is answered in it.
+call_raw "initialize answers an older client in its own revision" \
+  '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"old","version":"0"}}}' \
+  -- '"protocolVersion":"2024-11-05"'
+
+# The stateless revision has no handshake: a request carries its
+# protocol version in `_meta`, and `server/discover` says what the
+# server speaks.
+call_raw "server/discover lists the revisions the server speaks" \
+  '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' \
+  -- '"2026-07-28"'
 
 call "tools/list advertises all four tools" \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   '"xml_inspect"'
+
+call "every tool declares an outputSchema" \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  '"outputSchema"'
+
+call "every tool is annotated read-only" \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  '"readOnlyHint":true'
 
 # Call xml_inspect first: a model that knows the element names writes a
 # query that works, and one that guesses writes `//item` against a
@@ -17,6 +37,10 @@ call "tools/list advertises all four tools" \
 call "xml_inspect summarises the shape" \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"xml_inspect","arguments":{"xml":"<r><t>x</t></r>"}}}' \
   'Root element: r'
+
+call "xml_inspect returns the shape as structured content too" \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"xml_inspect","arguments":{"xml":"<r><t>x</t></r>"}}}' \
+  '"structuredContent":{"elements":{"r":1,"t":1}'
 
 call "xml_query returns one value per line" \
   '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<r><t>Dune</t><t>Germinal</t></r>","xpath":"//t"}}}' \
@@ -42,7 +66,6 @@ call "a successful call is not an error" \
 call "an escaped surrogate pair is accepted" \
   '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<r><t>😀</t></r>","xpath":"//t"}}}' \
   '"isError":false'
-
 
 # Namespaces. A prefix resolves against bindings sent with the query,
 # not against the document, so an unbound one is an error rather than a

@@ -9,11 +9,11 @@ about what it *cannot* do.
 
 ## What this software is
 
-`oxml-mcp` is a Model Context Protocol server exposing XML parsing, XPath and XSD validation over stdio.
+`oxml-mcp` is a Model Context Protocol server exposing XML parsing, XPath and XSD validation over stdio, streamable HTTP and the older HTTP+SSE transport.
 
 ## What it consumes
 
-Its inputs are JSON-RPC requests, and the XML and schema documents carried inside them — all untrusted, and in practice authored by a language model. The threat model assumes every one of them is
+Its inputs are JSON-RPC requests, and the XML and schema documents carried inside them — all untrusted, and in practice authored by a language model. Over HTTP they arrive from anyone who can reach the listener, which does not authenticate. The threat model assumes every one of them is
 hostile: a document written specifically to crash the parser, exhaust
 memory, or reach something it should not.
 
@@ -27,7 +27,7 @@ or reach the network or the filesystem.**
 
 ### Memory safety is structural, not tested for
 
-The server has no filesystem and no network access. It never fetches a document by path or URI, which is why documents are passed as strings; a server that fetches is one that can be aimed at an internal network by the document it was asked to read.
+The tools have no filesystem and no network access. The server never fetches a document by path or URI, which is why documents are passed as strings; a server that fetches is one that can be aimed at an internal network by the document it was asked to read. The only socket is the listener the operator asks for on the command line, and it only answers.
 
 ### Resource exhaustion is bounded, not merely unlikely
 
@@ -46,9 +46,10 @@ in either direction fails the build.
 ## The evidence
 
 - `#![forbid(unsafe_code)]`, checked by a CI job.
-- 41 tests over request dispatch, each tool, the transport loop and the error paths. JSON parsing moved to `oxml-json` at 0.0.8 and is tested there, which is why this number fell rather than rose.
-- 99.18% line coverage, gated at a 95% floor.
-- A malformed request is answered with a JSON-RPC error, never a disconnection: one bad line must not cost a client its session.
+- 50 tests over each tool and its structured result, the command line, and every transport: a session through an in-memory pipe with the SDK's client, the binary over stdio, and the binary over both HTTP transports. The JSON-RPC layer is `rmcp`'s and is tested there.
+- Line coverage gated at a 95% floor.
+- A malformed request never costs a client its session: a body that is not JSON is refused over HTTP and skipped over stdio, and the next request is answered.
+- The server scores 100/100 with an independent MCP auditor in both current protocol eras, and lists its tools with the reference Python client over both HTTP transports.
 
 ## What this case does *not* claim
 
