@@ -15,6 +15,7 @@
   <a href="https://docs.rs/oxml-mcp"><img src="https://img.shields.io/badge/docs.rs-oxml--mcp-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" alt="Docs.rs" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/oxml-mcp"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/oxml-mcp?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
   <a href="https://www.bestpractices.dev/projects/14312"><img src="https://img.shields.io/cii/level/14312?style=for-the-badge&label=OpenSSF%20Best%20Practices&logo=openssf" alt="OpenSSF Best Practices" /></a>
+  <a href="https://glama.ai/mcp/servers/sebastienrousseau/oxml-mcp"><img src="https://glama.ai/mcp/servers/sebastienrousseau/oxml-mcp/badges/score.svg" alt="Glama MCP server score" /></a>
 </p>
 
 ---
@@ -72,6 +73,14 @@ in a document it can see will approximate. `xml_query` with
 
 ```bash
 cargo install oxml-mcp
+```
+
+Without a Rust toolchain, the same binary ships as an image on GHCR
+(the [MCP registry](https://registry.modelcontextprotocol.io/) entry
+points at it):
+
+```bash
+docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.8
 ```
 
 ## Quick Start

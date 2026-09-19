@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Directory listings.** `server.json` for the MCP registry and
+  `glama.json` for Glama, an OCI image built and pushed to
+  `ghcr.io/sebastienrousseau/oxml-mcp` on every release tag, and a
+  workflow that publishes the registry entry from the tag. Until now the
+  server could only be found on crates.io, which no MCP directory reads.
+  `scripts/check-mcp-manifests.sh` keeps both manifests on the crate's
+  version.
+
 ## [0.0.8] - 2026-08-29
 
 ### Fixed
