@@ -3,14 +3,19 @@
 
 //! The server over a real pipe.
 //!
-//! The dispatch layer is unit-tested in the binary. What these cover is
-//! the transport around it: line framing, flushing, which inputs draw a
-//! reply at all, and that the process exits cleanly at end of input.
-//! None of that is reachable from a unit test, and all of it is what an
-//! MCP client depends on.
+//! The tools are unit-tested in the library and the session in
+//! `tests/serve.rs`. What these cover is the process around them: the
+//! stdio transport's line framing, the handshake a client performs
+//! first, which inputs draw a reply at all, and that the process exits
+//! cleanly at end of input. All of it is what an MCP client depends
+//! on, and none of it is reachable from a unit test.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
+
+const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#;
+const INITIALIZED: &str =
+    r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
 
 /// Send `lines` to the server and collect the replies.
 fn converse(lines: &[&str]) -> Vec<String> {
@@ -28,11 +33,29 @@ fn converse(lines: &[&str]) -> Vec<String> {
     }
     // Dropping stdin signals end of input; the server must then exit.
     let out = child.wait_with_output().expect("server exits");
-    assert!(out.status.success(), "server exited with {}", out.status);
+    assert!(
+        out.status.success(),
+        "server exited with {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .map(str::to_owned)
         .collect()
+}
+
+/// The reply carrying `id`.
+///
+/// Requests are dispatched concurrently, so replies may come back in
+/// any order; a client correlates them by id, and so must a test.
+fn by_id(replies: &[String], id: u32) -> &str {
+    let needle = format!("\"id\":{id},");
+    let alt = format!("\"id\":{id}}}");
+    replies
+        .iter()
+        .find(|r| r.contains(&needle) || r.contains(&alt))
+        .unwrap_or_else(|| panic!("no reply with id {id} in {replies:?}"))
 }
 
 fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
@@ -44,59 +67,106 @@ fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 
 #[test]
 fn one_request_draws_exactly_one_line() {
-    let replies =
-        converse(&[r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#]);
+    let replies = converse(&[INITIALIZE]);
     assert_eq!(replies.len(), 1, "{replies:?}");
     assert!(replies[0].contains("\"id\":1"), "{}", replies[0]);
+    assert_eq!(field(&replies[0], "protocolVersion"), Some("2025-11-25"));
+    assert_eq!(field(&replies[0], "name"), Some("oxml-mcp"));
+}
+
+#[test]
+fn an_older_client_is_answered_in_its_own_revision() {
+    // A client pinned to 2024-11-05 gets 2024-11-05 back, not a newer
+    // revision it would have to refuse.
+    let replies = converse(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"old","version":"0"}}}"#,
+    ]);
     assert_eq!(field(&replies[0], "protocolVersion"), Some("2024-11-05"));
 }
 
 #[test]
-fn a_session_is_answered_in_order() {
+fn every_request_in_a_session_is_answered() {
     let replies = converse(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
-        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        INITIALIZE,
+        INITIALIZED,
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
         r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<a><b>Dune</b></a>","xpath":"//b"}}}"#,
     ]);
     // Three requests, one notification: three replies.
     assert_eq!(replies.len(), 3, "{replies:?}");
-    assert!(replies[0].contains("\"id\":1"));
-    assert!(replies[1].contains("\"id\":2"));
-    assert!(replies[2].contains("\"id\":3"));
-    assert!(replies[2].contains("Dune"), "{}", replies[2]);
+    assert!(by_id(&replies, 1).contains("protocolVersion"));
+    assert!(by_id(&replies, 2).contains("xml_inspect"));
+    let call = by_id(&replies, 3);
+    assert!(call.contains("Dune"), "{call}");
+    assert!(call.contains("structuredContent"), "{call}");
+}
+
+#[test]
+fn a_stateless_client_needs_no_handshake() {
+    // The 2026-07-28 revision has no `initialize`: every request names
+    // its protocol version in `_meta`, and the first one may be the
+    // real work.
+    let replies = converse(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
+    ]);
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert!(by_id(&replies, 1).contains("xml_query"));
+    let discover = by_id(&replies, 2);
+    assert!(discover.contains("2026-07-28"), "{discover}");
+    assert!(discover.contains("2025-11-25"), "{discover}");
 }
 
 #[test]
 fn blank_lines_are_skipped_rather_than_answered() {
     // Some clients pad the stream; a reply to a blank line would
     // desynchronise the whole conversation.
-    let replies = converse(&[
-        "",
-        "   ",
-        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
-        "",
-    ]);
+    let replies = converse(&["", "   ", INITIALIZE, ""]);
     assert_eq!(replies.len(), 1, "{replies:?}");
 }
 
 #[test]
 fn a_notification_alone_draws_no_reply_and_exits_cleanly() {
-    let replies = converse(&[r#"{"jsonrpc":"2.0","method":"initialized"}"#]);
+    let replies = converse(&[INITIALIZED]);
     assert!(replies.is_empty(), "{replies:?}");
 }
 
 #[test]
 fn malformed_input_does_not_stop_the_server() {
     // The connection must survive a bad line: an MCP client would
-    // otherwise see the whole server die on one typo.
+    // otherwise see the whole server die on one typo. The SDK skips
+    // bytes that are not JSON without a reply, and answers JSON that
+    // is not a JSON-RPC message with an error.
     let replies = converse(&[
         "this is not json",
-        r#"{"jsonrpc":"2.0","id":2,"method":"initialize"}"#,
+        INITIALIZE,
+        INITIALIZED,
+        r#"{"jsonrpc":"2.0","id":7}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
     ]);
-    assert_eq!(replies.len(), 2, "{replies:?}");
-    assert!(replies[0].contains("-32700"), "{}", replies[0]);
-    assert!(replies[1].contains("\"id\":2"), "{}", replies[1]);
+    assert_eq!(replies.len(), 3, "{replies:?}");
+    assert!(by_id(&replies, 1).contains("protocolVersion"));
+    // The SDK cannot bind that error to the request it could not
+    // read, so it answers with a null id and the invalid-request code.
+    assert!(replies.iter().any(|r| r.contains("-32600")), "{replies:?}");
+    assert!(by_id(&replies, 2).contains("xml_query"));
+}
+
+#[test]
+fn an_unknown_method_and_tool_are_reported_distinctly() {
+    let replies = converse(&[
+        INITIALIZE,
+        INITIALIZED,
+        r#"{"jsonrpc":"2.0","id":2,"method":"no/such"}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}"#,
+    ]);
+    assert_eq!(replies.len(), 3, "{replies:?}");
+    // A method the protocol does not have is a JSON-RPC error; a tool
+    // the server does not have is a result the model can read.
+    assert!(by_id(&replies, 2).contains("-32601"));
+    let tool = by_id(&replies, 3);
+    assert!(tool.contains("\"isError\":true"), "{tool}");
+    assert!(tool.contains("Unknown tool: no_such_tool"), "{tool}");
 }
 
 #[test]
@@ -109,8 +179,47 @@ fn a_document_containing_newlines_stays_on_one_line() {
     // The transport is line-delimited; an embedded newline in the
     // response would split it into two unparseable halves.
     let replies = converse(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xml_inspect","arguments":{"xml":"<a>\n<b/>\n<b/>\n</a>"}}}"#,
+        INITIALIZE,
+        INITIALIZED,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"xml_inspect","arguments":{"xml":"<a>\n<b/>\n<b/>\n</a>"}}}"#,
     ]);
-    assert_eq!(replies.len(), 1, "{replies:?}");
-    assert!(replies[0].starts_with('{') && replies[0].ends_with('}'));
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    let reply = by_id(&replies, 2);
+    assert!(reply.starts_with('{') && reply.ends_with('}'));
+    assert!(reply.contains("b: 2"), "{reply}");
+}
+
+#[test]
+fn version_and_help_print_and_exit() {
+    let out = Command::new(env!("CARGO_BIN_EXE_oxml-mcp"))
+        .arg("--version")
+        .output()
+        .expect("runs");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        text.trim(),
+        format!("oxml-mcp {}", env!("CARGO_PKG_VERSION"))
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_oxml-mcp"))
+        .arg("--help")
+        .output()
+        .expect("runs");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("--transport"), "{text}");
+    assert!(text.contains("/mcp"), "{text}");
+}
+
+#[test]
+fn a_bad_argument_is_a_usage_error() {
+    let out = Command::new(env!("CARGO_BIN_EXE_oxml-mcp"))
+        .args(["--transport", "telepathy"])
+        .output()
+        .expect("runs");
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("telepathy"), "{text}");
+    assert!(text.contains("Usage:"), "{text}");
 }

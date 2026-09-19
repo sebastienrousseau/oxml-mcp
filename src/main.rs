@@ -3,14 +3,23 @@
 
 //! The `oxml-mcp` executable.
 //!
-//! Everything the server does lives in the library, which is what the
-//! unit tests and benchmarks drive. This binary only supplies the two
-//! ends of the pipe: an MCP client speaks over stdio.
+//! Everything the server does lives in the library. This binary picks
+//! the transport from the command line -- stdio by default, streamable
+//! HTTP or the older HTTP+SSE on request -- and hands the library's
+//! handler to it. `transport.rs` is the same file in every Rust server
+//! of the suite.
 
 #![forbid(unsafe_code)]
 
-fn main() {
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    oxml_mcp::serve(stdin.lock(), stdout.lock());
+mod transport;
+
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    transport::run(
+        "oxml-mcp",
+        env!("CARGO_PKG_VERSION"),
+        std::env::args().skip(1),
+        oxml_mcp::XmlServer::new,
+    )
 }
