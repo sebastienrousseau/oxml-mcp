@@ -46,7 +46,7 @@ in either direction fails the build.
 ## The evidence
 
 - `#![forbid(unsafe_code)]`, checked by a CI job.
-- 50 tests over each tool and its structured result, the command line, and every transport: a session through an in-memory pipe with the SDK's client, the binary over stdio, and the binary over both HTTP transports. The JSON-RPC layer is `rmcp`'s and is tested there.
+- 51 tests over each tool and its structured result, the command line, and every transport: a session through an in-memory pipe with the SDK's client, the binary over stdio, and the binary over both HTTP transports. The JSON-RPC layer is `rmcp`'s and is tested there.
 - Line coverage gated at a 95% floor.
 - A malformed request never costs a client its session: a body that is not JSON is refused over HTTP and skipped over stdio, and the next request is answered.
 - The server scores 100/100 with an independent MCP auditor in both current protocol eras, and lists its tools with the reference Python client over both HTTP transports.
