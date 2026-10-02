@@ -6,8 +6,8 @@
 //! Everything the server does lives in the library. This binary picks
 //! the transport from the command line -- stdio by default, streamable
 //! HTTP or the older HTTP+SSE on request -- and hands the library's
-//! handler to it. `transport.rs` is the same file in every Rust server
-//! of the suite.
+//! handler to it. The `transport` module (`transport.rs` and
+//! `transport/`) is the same in every Rust server of the suite.
 
 #![forbid(unsafe_code)]
 
