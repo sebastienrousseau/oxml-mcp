@@ -8,7 +8,7 @@
 cargo test
 ```
 
-51 tests, covering each tool and its structured result, the
+52 tests, covering each tool and its structured result, the
 command line, and every transport: a session held with the SDK's own
 client through an in-memory pipe, the binary driven over stdio, and
 the binary driven over both HTTP transports by a small hand-written
