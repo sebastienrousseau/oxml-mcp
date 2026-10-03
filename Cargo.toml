@@ -1,9 +1,9 @@
 [package]
 name = "oxml-mcp"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2024"
 rust-version = "1.88.0"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0 OR MIT"
 description = "Model Context Protocol server exposing oxml's XML parsing, XPath and XSD validation"
 repository = "https://github.com/sebastienrousseau/oxml-mcp"
 homepage = "https://github.com/sebastienrousseau/oxml-mcp"
@@ -29,6 +29,7 @@ include = [
     "/LICENSE",
     "/LICENSE-APACHE",
     "/LICENSE-MIT",
+    "/LICENSES/**",
     "/README.md",
     "/benches/**",
     "/examples/**",

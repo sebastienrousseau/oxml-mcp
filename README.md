@@ -18,6 +18,10 @@
   <a href="https://glama.ai/mcp/servers/sebastienrousseau/oxml-mcp"><img src="https://glama.ai/mcp/servers/sebastienrousseau/oxml-mcp/badges/score.svg" alt="Glama MCP server score" /></a>
 </p>
 
+<p align="center">
+  <img src=".github/demo.gif" alt="oxml-mcp Demo" width="100%" />
+</p>
+
 ---
 
 ## Contents
@@ -40,7 +44,7 @@
 - [Protocol](#protocol) — MCP `2025-11-25` and `2026-07-28`, and the two kinds of failure
 - [Errors](#errors) — the two kinds, and which is which
 - [Design](#design) — why four tools, and why documents are strings
-- [Capabilities in 0.0.8](#capabilities-in-008) — release inventory
+- [Capabilities in 0.0.9](#capabilities-in-009) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — how this compares to the alternatives
 - [Benchmarks](#benchmarks) — latency per request, measured in pairs
 
@@ -81,7 +85,7 @@ Without a Rust toolchain, the same binary ships as an image on GHCR
 points at it):
 
 ```bash
-docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.8
+docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.9
 ```
 
 ## Transports
@@ -312,7 +316,7 @@ are a protocol project, and keeping a hand-written one honest against
 them is not where the value of an XML server lies. What is this
 crate's own is the four functions and the text a model reads.
 
-## Capabilities in 0.0.8
+## Capabilities in 0.0.9
 
 - Four tools: query, inspect, check, validate
 - XPath 1.0: ten axes, 25 functions, all four value types
@@ -528,5 +532,4 @@ input. See
 
 ## License
 
-Licensed under either of Apache-2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-or MIT ([LICENSE-MIT](LICENSE-MIT)), at your option.
+Dual-licensed under either the [Apache License, Version 2.0](LICENSE-APACHE) or the [MIT License](LICENSE-MIT), at your option.
