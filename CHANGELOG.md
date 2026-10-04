@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-10-03
+
 ### Added
 
+- **Terminal demo animation.** `.github/demo.gif` generated via VHS (`.github/demo.tape`) with `make demo` target.
+- **Developer Makefile.** Standardized developer targets for `all`, `check`, `clippy`, `test`, `fmt`, `doc`, `gate`, `demo`, and `clean`.
+- **Dual licensing.** Complete Apache-2.0 and MIT license texts under `LICENSES/` and aligned manifest declarations.
+- **Agent guidelines.** Standardized `AGENTS.md` documenting invariants and verification gates.
 - **Three transports from one command line.** `oxml-mcp` speaks stdio
   as before; `oxml-mcp --transport streamable-http --host 127.0.0.1
   --port 8000` serves `/mcp`; `oxml-mcp --transport sse --port 8001`

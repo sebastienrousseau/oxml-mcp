@@ -6,10 +6,10 @@
   "title": "oxml-mcp",
   "display_name": "oxml MCP",
   "description": "Model Context Protocol server exposing oxml's XML toolchain to AI agents: xml_query runs XPath 1.0 over a document, xml_inspect reports its structure (root, namespaces, element counts, depth), xml_check tests well-formedness with a located reason, and xml_validate validates against an XSD schema. Pure Rust, no unsafe code, no configuration; one binary speaking MCP 2025-11-25 and 2026-07-28 over stdio, streamable HTTP (/mcp) or the older HTTP+SSE transport. Works with Claude Desktop, Claude Code, Cursor, Zed and Continue.dev.",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "repository": "https://github.com/sebastienrousseau/oxml-mcp",
   "homepage": "https://github.com/sebastienrousseau/oxml-mcp",
-  "license": "MIT OR Apache-2.0",
+  "license": "Apache-2.0 OR MIT",
   "language": "Rust",
   "runtime": "docker",
   "categories": [
@@ -33,12 +33,12 @@
         "run",
         "--rm",
         "-i",
-        "ghcr.io/sebastienrousseau/oxml-mcp:0.0.8"
+        "ghcr.io/sebastienrousseau/oxml-mcp:0.0.9"
       ]
     }
   },
   "installation": {
     "cargo": "cargo install oxml-mcp",
-    "docker": "docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.8"
+    "docker": "docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.9"
   }
 }
