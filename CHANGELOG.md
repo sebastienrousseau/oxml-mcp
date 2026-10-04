@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.9] - 2026-10-03
+## [0.0.9] - 2026-10-04
+
+### Changed
+
+- **Upgrade to `oxml` 0.0.9 and `xmlschema` 0.0.9.** Accelerated XML
+  parsing with chunked SWAR scanning and generational arena slot
+  recycling.
 
 ### Added
 

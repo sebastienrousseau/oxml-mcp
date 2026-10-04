@@ -46,8 +46,8 @@ name = "oxml-mcp"
 path = "src/main.rs"
 
 [dependencies]
-oxml = "0.0.8"
-xmlschema = "0.0.8"
+oxml = "0.0.9"
+xmlschema = "0.0.9"
 # The official MCP SDK: protocol revisions 2024-11-05 through
 # 2026-07-28, stdio and streamable HTTP. The legacy HTTP+SSE bridge in
 # src/transport/sse.rs is the only protocol code left in this crate.
