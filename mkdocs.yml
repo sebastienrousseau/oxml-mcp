@@ -2,7 +2,7 @@
 site_name: oxml-mcp
 site_description: >-
   Model Context Protocol server exposing oxml's XML parsing, XPath, and XSD validation for AI agents.
-site_url: https://sebastienrousseau.github.io/oxml-mcp/
+site_url: https://mcp.oxmllib.com/
 site_author: Sebastien Rousseau
 copyright: Copyright &copy; 2026 <a href="https://sebastienrousseau.com/" rel="author">Sebastien Rousseau</a>
 
