@@ -66,7 +66,13 @@ async fn the_catalogue_is_complete_and_annotated() {
     names.sort_unstable();
     assert_eq!(
         names,
-        ["xml_check", "xml_inspect", "xml_query", "xml_validate"]
+        [
+            "xml_check",
+            "xml_format",
+            "xml_inspect",
+            "xml_query",
+            "xml_validate"
+        ]
     );
     for tool in &tools {
         assert!(tool.description.is_some(), "{} undescribed", tool.name);
@@ -153,6 +159,7 @@ async fn every_advertised_tool_is_callable() {
         ("xml_validate", json!({"xml": doc, "xsd": xsd})),
         ("xml_check", json!({"xml": doc})),
         ("xml_inspect", json!({"xml": doc})),
+        ("xml_format", json!({"xml": doc, "indent": 2})),
     ] {
         let result = client
             .call_tool(

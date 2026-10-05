@@ -40,11 +40,11 @@
 
 **Reference**
 
-- [Tools](#tools) — `xml_query`, `xml_validate`, `xml_check`, `xml_inspect`
+- [Tools](#tools) — `xml_query`, `xml_validate`, `xml_check`, `xml_inspect`, `xml_format`
 - [Protocol](#protocol) — MCP `2025-11-25` and `2026-07-28`, and the two kinds of failure
 - [Errors](#errors) — the two kinds, and which is which
-- [Design](#design) — why four tools, and why documents are strings
-- [Capabilities in 0.0.9](#capabilities-in-009) — release inventory
+- [Design](#design) — why five tools, and why documents are strings
+- [Capabilities in 0.0.10](#capabilities-in-0010) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — how this compares to the alternatives
 - [Benchmarks](#benchmarks) — latency per request, measured in pairs
 
@@ -242,6 +242,21 @@ to the element it concerns.
 | `xml` | string | The document |
 | `xsd` | string | The schema |
 
+### `xml_format`
+
+Format an XML document with configurable indentation (spaces) and empty
+element style, or minify it.
+
+```json
+{"name":"xml_format","arguments":{"xml":"<root><item/></root>","indent":2}}
+```
+
+| Argument | Type | Default | |
+|---|---|---|---|
+| `xml` | string | *(required)* | The document |
+| `indent` | integer | `0` | Spaces per indentation level (`0` for minified) |
+| `empty_elements` | string | `"self-closing"` | `"self-closing"` (`<a/>`), `"spaced"` (`<a />`), or `"expanded"` (`<a></a>`) |
+
 ## Protocol
 
 MCP over JSON-RPC 2.0, implemented by [`rmcp`](https://crates.io/crates/rmcp),
@@ -255,7 +270,7 @@ has no handshake — each request names its revision in `_meta` and
 |---|---|
 | `initialize` | Capabilities, server info, the negotiated revision |
 | `server/discover` | The same, for the stateless revision |
-| `tools/list` | The four tools: input schema, output schema, annotations |
+| `tools/list` | The five tools: input schema, output schema, annotations |
 | `tools/call` | Invoke one |
 | `ping` | Answered |
 
@@ -280,7 +295,7 @@ client handles it rather than the model.
 | Invalid XPath expression | `result`, `isError: true` |
 | Schema violation | `result`, `isError: true`, with the violations as `structuredContent` |
 | Missing or mistyped argument | `result`, `isError: true`, naming the field |
-| Unknown tool | `result`, `isError: true`, naming the four that exist |
+| Unknown tool | `result`, `isError: true`, naming the five that exist |
 | Unknown method | `error`, `-32601` |
 | `id` with no `method` | `error` |
 | Malformed JSON | HTTP `415` over HTTP; skipped over stdio, the session continues |
@@ -301,7 +316,7 @@ The model reads that text and can fix the document or tell the user.
 
 ## Design
 
-**Four tools, not fourteen.** Every tool description is in the model's
+**Five tools, not fourteen.** Every tool description is in the model's
 context on every request. A server with twenty narrow tools spends more
 context describing itself than a document would.
 
@@ -314,19 +329,21 @@ file on the machine.
 are the official SDK's. Three protocol revisions and three transports
 are a protocol project, and keeping a hand-written one honest against
 them is not where the value of an XML server lies. What is this
-crate's own is the four functions and the text a model reads.
+crate's own is the five functions and the text a model reads.
 
-## Capabilities in 0.0.9
+## Capabilities in 0.0.10
 
-- Four tools: query, inspect, check, validate
+- Five tools: query, inspect, check, validate, format
 - XPath 1.0: ten axes, 25 functions, all four value types
 - XSD validation
-- JSON-RPC 2.0 over stdio, MCP `2024-11-05`
+- XML formatting and minification (`xml_format`)
+- JSON-RPC 2.0 over stdio, MCP `2024-11-05`, `2025-11-25`, and `2026-07-28`
+- Streaming JSON-RPC responses over streamable HTTP and SSE
 - Escaped surrogate pairs in JSON input, so a document containing an
   emoji works from a Python client
 - No filesystem access, no network access
 
-**Not yet:** resources, prompts, streaming, documents by path or URI.
+**Not yet:** resources, prompts, documents by path or URI.
 
 ## Ecosystem comparison
 
@@ -404,9 +421,9 @@ Yes. External entities are never dereferenced, so a document
 containing `<!ENTITY xxe SYSTEM "file:///etc/passwd">` cannot make the
 server read that file. Entity expansion and nesting depth are bounded.
 
-### Why are there only four tools?
+### Why are there only five tools?
 
-Every tool's description occupies context on every request. Four broad
+Every tool's description occupies context on every request. Five broad
 tools cost less than twenty narrow ones and cover the same ground,
 because XPath is already a query language.
 
@@ -461,7 +478,7 @@ line is read as normal.
 Until 0.0.8 it was `-32602`. In the stateless HTTP revision the SDK
 carries that code as an HTTP 400, which a client reports as a
 transport fault and a model never reads. A model that misspelt a tool
-name is better served by text naming the four tools that exist. See
+name is better served by text naming the five tools that exist. See
 [Protocol](#protocol).
 
 ## Development

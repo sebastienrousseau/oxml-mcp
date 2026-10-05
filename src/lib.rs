@@ -3,7 +3,7 @@
 
 //! `oxml-mcp` — a Model Context Protocol server for XML.
 //!
-//! Four tools: query, validate, check, and inspect. The protocol is
+//! Five tools: query, validate, check, inspect, and format. The protocol is
 //! handled by [`rmcp`], the official MCP SDK; this crate supplies the
 //! tools and the text a model reads.
 //!
@@ -13,8 +13,8 @@
 //! question with an exact answer, and the document never needs to fit
 //! in the context window.
 //!
-//! The four operations are plain functions -- [`query`], [`validate`],
-//! [`check`], [`inspect`] -- and [`XmlServer`] is the handler that
+//! The five operations are plain functions -- [`query`], [`validate`],
+//! [`check`], [`inspect`], [`format_xml`] -- and [`XmlServer`] is the handler that
 //! exposes them as MCP tools. Each answer is returned twice: as text
 //! for the model, and as a structured value for a client that wants to
 //! read it without parsing prose.
@@ -24,6 +24,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use oxml::{EmptyElement, Indent, Newline, SerialiseOptions};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::{ToolCallContext, schema_for_output};
 use rmcp::handler::server::wrapper::Parameters;
@@ -323,6 +324,59 @@ pub fn inspect(xml: &str) -> Result<InspectOutput, String> {
     })
 }
 
+/// What formatting a document produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct FormatOutput {
+    /// Original size of the XML in bytes.
+    pub original_size: usize,
+    /// Formatted size of the XML in bytes.
+    pub formatted_size: usize,
+    /// The formatted XML.
+    pub xml: String,
+}
+
+impl fmt::Display for FormatOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Formatted document ({} bytes -> {} bytes):\n{}",
+            self.original_size, self.formatted_size, self.xml
+        )
+    }
+}
+
+/// Format an XML document with configurable indentation and empty element
+/// style, or minify it.
+///
+/// # Errors
+///
+/// A document that is not well-formed is reported as text a model can act on.
+pub fn format_xml(
+    xml: &str,
+    indent: Option<u8>,
+    empty_elements: Option<&str>,
+) -> Result<FormatOutput, String> {
+    let doc = parse_doc(xml)?;
+    let options = SerialiseOptions {
+        indent: indent
+            .and_then(|n| if n > 0 { Some(Indent::Spaces(n)) } else { None }),
+        empty_elements: match empty_elements {
+            Some("expanded") => EmptyElement::Expanded,
+            Some("spaced" | "self-closing-spaced") => {
+                EmptyElement::SelfClosingSpaced
+            }
+            _ => EmptyElement::SelfClosing,
+        },
+        newline: Newline::Lf,
+    };
+    let formatted = doc.to_xml_with(options);
+    Ok(FormatOutput {
+        original_size: xml.len(),
+        formatted_size: formatted.len(),
+        xml: formatted,
+    })
+}
+
 // The doc comments on the argument structs are the descriptions a
 // client shows the model, kept word for word from the previous
 // release; backticks would change them. The examples are what an
@@ -364,6 +418,22 @@ pub struct DocumentArgs {
     /// The XML document
     #[schemars(example = &"<library><book lang=\"en\"><title>Dune</title></book></library>")]
     pub xml: String,
+}
+
+/// Arguments of `xml_format`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FormatArgs {
+    /// The XML document
+    #[schemars(example = &"<library><book lang=\"en\"><title>Dune</title></book></library>")]
+    pub xml: String,
+    /// Spaces per indentation level (e.g. 2 or 4). Set to 0 or omit to minify
+    /// without extra whitespace.
+    #[serde(default)]
+    pub indent: Option<u8>,
+    /// Empty element style: 'self-closing' (<a/>), 'spaced' (<a />), or
+    /// 'expanded' (<a></a>). Default is 'self-closing'.
+    #[serde(default)]
+    pub empty_elements: Option<String>,
 }
 
 /// A tool result carrying the same answer twice: as text for the
@@ -518,6 +588,30 @@ impl XmlServer {
     ) -> Result<CallToolResult, ErrorData> {
         reply(inspect(&args.xml), |_| false)
     }
+
+    #[tool(
+        name = "xml_format",
+        description = "Format an XML document with configurable indentation \
+                       (spaces) and empty element style, or minify it. \
+                       Use this to pretty-print or compact XML.",
+        annotations(
+            title = "Format or minify XML",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
+        output_schema = schema_for_output::<FormatOutput>()
+    )]
+    fn xml_format(
+        &self,
+        Parameters(args): Parameters<FormatArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        reply(
+            format_xml(&args.xml, args.indent, args.empty_elements.as_deref()),
+            |_| false,
+        )
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -538,7 +632,8 @@ impl ServerHandler for XmlServer {
                  paths. xml_inspect reports a document's element names \
                  and namespaces; xml_query evaluates XPath 1.0 against \
                  it; xml_check reports well-formedness; xml_validate \
-                 checks it against an XSD.",
+                 checks it against an XSD; xml_format formats or \
+                 minifies it.",
             )
     }
 
@@ -558,7 +653,7 @@ impl ServerHandler for XmlServer {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
                 format!(
                     "Unknown tool: {}. The tools are xml_query, xml_validate, \
-                 xml_check and xml_inspect.",
+                  xml_check, xml_inspect and xml_format.",
                     request.name
                 ),
             )])
@@ -591,6 +686,7 @@ mod tests {
             "xml_validate" => server.xml_validate(Parameters(parse(args))),
             "xml_check" => server.xml_check(Parameters(parse(args))),
             "xml_inspect" => server.xml_inspect(Parameters(parse(args))),
+            "xml_format" => server.xml_format(Parameters(parse(args))),
             other => panic!("no such tool {other}"),
         };
         result.expect("a tool failure is a result, not a protocol error")
@@ -616,7 +712,13 @@ mod tests {
         names.sort_unstable();
         assert_eq!(
             names,
-            ["xml_check", "xml_inspect", "xml_query", "xml_validate"]
+            [
+                "xml_check",
+                "xml_format",
+                "xml_inspect",
+                "xml_query",
+                "xml_validate"
+            ]
         );
         for t in &tools {
             assert!(t.description.is_some(), "{} has no description", t.name);
@@ -913,5 +1015,45 @@ mod tests {
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
         assert!(info.capabilities.tools.is_some());
         assert!(info.instructions.is_some());
+    }
+
+    #[test]
+    fn xml_format_pretty_prints_and_minifies() {
+        let unformatted = "<root><child id=\"1\"><sub/></child></root>";
+        let r = call(
+            "xml_format",
+            json!({"xml": unformatted, "indent": 2, "empty_elements": "self-closing"}),
+        );
+        assert!(!is_error(&r), "{r:?}");
+        let structured = r.structured_content.expect("structured");
+        let formatted = structured["xml"].as_str().expect("xml string");
+        assert!(formatted.contains("\n  <child"), "{formatted}");
+        assert!(formatted.contains("<sub/>"), "{formatted}");
+
+        // Minify without indent
+        let r_mini =
+            call("xml_format", json!({"xml": unformatted, "indent": 0}));
+        assert!(!is_error(&r_mini));
+        let mini = r_mini.structured_content.expect("structured")["xml"]
+            .as_str()
+            .expect("xml string")
+            .to_owned();
+        assert_eq!(mini, unformatted);
+
+        // Expanded empty elements
+        let r_exp = call(
+            "xml_format",
+            json!({"xml": "<a/>", "empty_elements": "expanded"}),
+        );
+        assert!(!is_error(&r_exp));
+        assert_eq!(
+            r_exp.structured_content.expect("structured")["xml"].as_str(),
+            Some("<a></a>")
+        );
+
+        // Malformed XML returns a tool error
+        let r_err = call("xml_format", json!({"xml": "<root><unclosed>"}));
+        assert!(is_error(&r_err));
+        assert!(text_of(&r_err).contains("not well-formed"));
     }
 }
