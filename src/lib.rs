@@ -430,8 +430,8 @@ pub struct FormatArgs {
     /// without extra whitespace.
     #[serde(default)]
     pub indent: Option<u8>,
-    /// Empty element style: 'self-closing' (<a/>), 'spaced' (<a />), or
-    /// 'expanded' (<a></a>). Default is 'self-closing'.
+    /// Empty element style: 'self-closing' (`<a/>`), 'spaced' (`<a />`), or
+    /// 'expanded' (`<a></a>`). Default is 'self-closing'.
     #[serde(default)]
     pub empty_elements: Option<String>,
 }
