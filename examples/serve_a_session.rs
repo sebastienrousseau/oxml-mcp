@@ -49,12 +49,17 @@ async fn main() {
     println!("{verdict}");
     assert!(verdict.valid);
 
+    let formatted = oxml_mcp::format_xml(doc, Some(2), Some("self-closing"))
+        .expect("valid xml");
+    println!("{formatted}");
+    assert!(formatted.xml.contains("<library>\n  <book>"));
+
     // A failure is text a model can act on, not a panic.
     let fault = oxml_mcp::check("<a>").expect_err("not well-formed");
     println!("{fault}");
     assert!(fault.contains("line 1"));
 
-    // The same four, as MCP tools over an in-memory pipe. A host
+    // The same five, as MCP tools over an in-memory pipe. A host
     // process would do this over the server's stdin and stdout.
     let (client_io, server_io) = tokio::io::duplex(1 << 16);
     // `serve` returns once the handshake is done, so the server side
@@ -77,7 +82,7 @@ async fn main() {
     let tools = client.list_all_tools().await.expect("tools/list");
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     println!("tools: {}", names.join(", "));
-    assert_eq!(names.len(), 4);
+    assert_eq!(names.len(), 5);
 
     let result = client
         .call_tool(CallToolRequestParams::new("xml_query").with_arguments(

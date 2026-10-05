@@ -295,7 +295,7 @@ fn streamable_http_holds_a_session_with_a_handshake() {
     assert_eq!(r.status, 200);
     let list = r.next_message();
     let tools = list["result"]["tools"].as_array().expect("tools");
-    assert_eq!(tools.len(), 4, "{list}");
+    assert_eq!(tools.len(), 5, "{list}");
     assert!(
         tools.iter().all(|t| t["outputSchema"].is_object()),
         "{list}"
@@ -397,7 +397,7 @@ fn streamable_http_serves_stateless_requests_without_a_session() {
     );
     assert_eq!(r.status, 200);
     let list = r.next_message();
-    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(4));
+    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(5));
     drop(r);
 
     let call_headers = [
@@ -600,7 +600,7 @@ fn sse_opens_a_stream_and_answers_posts_on_it() {
     assert_eq!(r.status, 202);
     let list = stream.next_message();
     assert_eq!(list["id"], 2);
-    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(4));
+    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(5));
 
     let r = Http::send(
         &server.addr,
@@ -676,4 +676,48 @@ fn a_port_in_use_is_reported_not_swallowed() {
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(text.contains("cannot listen on"), "{text}");
     assert!(text.contains(&port), "{text}");
+}
+
+#[test]
+fn streamable_http_streams_xml_format_response_over_event_stream() {
+    let server = Server::start("streamable-http");
+    let version = ("MCP-Protocol-Version", "2026-07-28");
+    let call_headers = [
+        ACCEPT_BOTH,
+        JSON,
+        version,
+        ("Mcp-Method", "tools/call"),
+        ("Mcp-Name", "xml_format"),
+    ];
+    let mut r = Http::send(
+        &server.addr,
+        "POST",
+        "/mcp",
+        &call_headers,
+        &stateless(
+            1,
+            "tools/call",
+            json!({
+                "name": "xml_format",
+                "arguments": {
+                    "xml": "<catalog><item id=\"1\"/></catalog>",
+                    "indent": 2
+                }
+            }),
+        ),
+    );
+    assert_eq!(r.status, 200);
+    assert!(
+        r.header("content-type")
+            .is_some_and(|c| c.starts_with("text/event-stream")),
+        "response content-type must be text/event-stream: {:?}",
+        r.headers
+    );
+    let msg = r.next_message();
+    assert_eq!(msg["id"], 1);
+    assert_eq!(msg["result"]["isError"], false);
+    let formatted = msg["result"]["structuredContent"]["xml"]
+        .as_str()
+        .expect("xml string");
+    assert!(formatted.contains("\n  <item"), "{formatted}");
 }
