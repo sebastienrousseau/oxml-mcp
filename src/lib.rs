@@ -102,7 +102,15 @@ pub fn query(
         .copied()
         .filter(|(prefix, _)| *prefix != "xml")
         .collect();
-    let compiled = oxml::XPath::compile_with_namespaces(xpath, &bindings)
+    // The expression comes from the model, which is to say from
+    // whoever is driving it. `Limits::strict()` bounds its nesting and
+    // operator count so a pathological expression is an error rather
+    // than a stack overflow in the server.
+    let compiled = oxml::XPath::compile_with_namespaces_and_limits(
+        xpath,
+        &bindings,
+        &oxml::Limits::strict(),
+    )
         .map_err(|e| {
             // The library names a Rust function, which is no use to a
             // model. Say what it can put in the request.
