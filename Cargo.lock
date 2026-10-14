@@ -533,7 +533,7 @@ version = "0.0.10"
 
 [[package]]
 name = "oxml-mcp"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "axum",
  "futures",
