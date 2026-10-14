@@ -2,7 +2,7 @@
 name = "oxml-mcp"
 version = "0.0.10"
 edition = "2024"
-rust-version = "1.88.0"
+rust-version = "1.89.0"
 license = "Apache-2.0 OR MIT"
 description = "Model Context Protocol server exposing oxml's XML parsing, XPath and XSD validation"
 repository = "https://github.com/sebastienrousseau/oxml-mcp"
