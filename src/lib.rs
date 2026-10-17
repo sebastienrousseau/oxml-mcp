@@ -21,6 +21,8 @@
 
 #![forbid(unsafe_code)]
 
+mod output;
+
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -42,7 +44,7 @@ use serde::{Deserialize, Serialize};
 /// The location is what makes the message actionable: a model told
 /// only that the document is malformed will guess at where.
 fn parse_doc(xml: &str) -> Result<oxml::Document, String> {
-    oxml::parse(xml).map_err(|e| {
+    oxml::parse_with(xml, oxml::Limits::strict()).map_err(|e| {
         let (line, col) = e.line_column(xml);
         format!(
             "The document is not well-formed at line {line}, column {col}: {e}"
@@ -132,7 +134,11 @@ pub fn query(
                 )
             }
         })?;
-    let value = compiled.evaluate(&doc);
+    let context = oxml::xpath::EvalContext::new()
+        .with_limits(oxml::xpath::EvalLimits::default());
+    let value = compiled
+        .evaluate_with(&doc, &context)
+        .map_err(|e| e.to_string())?;
 
     let Some(nodes) = value.nodes() else {
         return Ok(QueryOutput {
@@ -140,9 +146,12 @@ pub fn query(
             values: vec![value.to_str(&doc)],
         });
     };
+    let mut remaining = oxml::xpath::EvalLimits::default().max_string_bytes;
     let values: Vec<String> = nodes
         .iter()
-        .map(|n| doc.text(*n))
+        .map(|n| output::text(&doc, *n, &mut remaining))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|t| !t.trim().is_empty())
         .collect();
     Ok(QueryOutput {
@@ -206,6 +215,9 @@ impl fmt::Display for ValidateOutput {
 /// The schema could not be read, or the document is not well-formed.
 /// Neither is a validation result, because nothing was validated.
 pub fn validate(xml: &str, xsd: &str) -> Result<ValidateOutput, String> {
+    if xsd.len() > 8 * 1024 * 1024 {
+        return Err("The schema exceeds the 8 MiB input limit".to_owned());
+    }
     let schema = xmlschema::parse_schema(xsd)
         .map_err(|e| format!("The schema could not be read: {e}"))?;
     let doc = parse_doc(xml)?;

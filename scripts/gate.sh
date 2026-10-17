@@ -48,8 +48,10 @@ step() {
 # a `git add -A` will commit it. `.gitignore` does not help once a path
 # is tracked, and CI then cannot create its build directory on top of
 # it -- every build job fails until it is removed.
+step "publish helper contract" python3 scripts/test-publish-dry-run.py
 step "no tracked build dir" bash -c '! git ls-files | grep -qx target'
 step "fmt"            cargo "+$TOOLCHAIN" fmt --all --check
+step "MCP manifests"  bash scripts/check-mcp-manifests.sh
 step "clippy"         cargo "+$TOOLCHAIN" clippy --all-targets --all-features -- -D warnings
 step "tests"          cargo "+$TOOLCHAIN" test --all-features
 step "rustdoc"        env RUSTDOCFLAGS="-D warnings" cargo "+$TOOLCHAIN" doc --no-deps --all-features
@@ -63,7 +65,7 @@ step "forbid unsafe" bash -c '
 step "examples" bash -c '
   cargo "+$TOOLCHAIN" build --release >/dev/null &&
   OXML_MCP="$PWD/target/release/oxml-mcp" ./examples/run-all.sh'
-step "coverage 95%" cargo "+$TOOLCHAIN" llvm-cov --all-features --fail-under-lines 95 \
+step "coverage 95%" cargo "+$TOOLCHAIN" llvm-cov --remap-path-prefix --all-features --fail-under-lines 95 \
   --ignore-filename-regex 'builds/cargo/package'
 # What `cargo publish` would upload, and whether the assurance case in
 # it describes this crate. oxml-json 0.0.8 shipped one inherited from

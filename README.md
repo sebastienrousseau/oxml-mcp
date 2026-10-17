@@ -36,7 +36,7 @@
 
 **The oxml ecosystem**
 
-- [The oxml ecosystem](#the-oxml-ecosystem) — six crates, one version
+- [The oxml ecosystem](#the-oxml-ecosystem) — seven crates, one version
 
 **Reference**
 
@@ -44,7 +44,7 @@
 - [Protocol](#protocol) — MCP `2025-11-25` and `2026-07-28`, and the two kinds of failure
 - [Errors](#errors) — the two kinds, and which is which
 - [Design](#design) — why five tools, and why documents are strings
-- [Capabilities in 0.0.10](#capabilities-in-0010) — release inventory
+- [Capabilities in 0.0.11](#capabilities-in-0011) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — how this compares to the alternatives
 - [Benchmarks](#benchmarks) — latency per request, measured in pairs
 
@@ -55,6 +55,7 @@
 - [FAQ](#faq)
 - [Development](#development)
 - [Security](#security)
+- [Roadmap](doc/ROADMAP.md)
 - [Documentation](#documentation)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
@@ -63,12 +64,14 @@
 
 ## Why a model wants this
 
-A 40 MB XML file does not fit in a context window, and pasting a
-fraction of it produces confident answers about the fraction.
+A client can supply XML directly as a tool argument and put only the
+selected results into a model prompt. `count(//record)` returns a count
+computed by the parser rather than an estimate from a pasted fragment.
 
-`count(//record)` fits in twelve characters and returns a number. That
-is the whole argument: give the model a query interface and the
-document stays on disk.
+The server accepts XML strings up to its strict 8 MiB source limit; it
+does not open paths or fetch URLs. A model constructing the complete
+tool argument itself still needs the XML text. The HTTP transport has
+its own, tighter SDK request-body limit.
 
 The secondary argument is arithmetic. A model asked to count elements
 in a document it can see will approximate. `xml_query` with
@@ -77,7 +80,7 @@ in a document it can see will approximate. `xml_query` with
 ## Install
 
 ```bash
-cargo install oxml-mcp
+cargo install oxml-mcp --version 0.0.11 --locked
 ```
 
 Without a Rust toolchain, the same binary ships as an image on GHCR
@@ -85,7 +88,7 @@ Without a Rust toolchain, the same binary ships as an image on GHCR
 points at it):
 
 ```bash
-docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.9
+docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.11
 ```
 
 ## Transports
@@ -169,8 +172,9 @@ no configuration file.
 | [`oxml-wasm`](https://github.com/sebastienrousseau/oxml-wasm) | WebAssembly bindings |
 | **`oxml-mcp`** | **This crate — MCP server** |
 | [`oxml-lsp`](https://github.com/sebastienrousseau/oxml-lsp) | Language Server Protocol server |
+| [`oxml-json`](https://github.com/sebastienrousseau/oxml-json) | JSON support for the language server |
 
-All six ship one version number, in steps of 0.0.1.
+All seven ship one version number, in steps of 0.0.1.
 
 ## Tools
 
@@ -331,7 +335,7 @@ are a protocol project, and keeping a hand-written one honest against
 them is not where the value of an XML server lies. What is this
 crate's own is the five functions and the text a model reads.
 
-## Capabilities in 0.0.10
+## Capabilities in 0.0.11
 
 - Five tools: query, inspect, check, validate, format
 - XPath 1.0: ten axes, 25 functions, all four value types
@@ -390,7 +394,8 @@ being true.
 
 - **The document fits in context.** Paste it; a tool round-trip is
   slower and adds nothing.
-- **You need the model to *write* XML.** These tools read.
+- **You need structural XML editing.** `xml_format` serializes and
+  formats a document; it does not insert, remove or change its data.
 - **You need XSLT or XPath 2.0.** Neither is available.
 - **The document is larger than memory.** It is parsed in full.
 - **You want the server to fetch documents.** It never will; that is
@@ -470,8 +475,9 @@ binding.
 
 ### What happens if the model sends invalid JSON?
 
-A JSON-RPC parse error, `-32700`. The server does not exit; the next
-line is read as normal.
+The SDK refuses malformed HTTP JSON with status `415`. Over stdio it
+skips the malformed line without replying and continues with the next
+one. See [Protocol](#protocol).
 
 ### Why is an unknown tool `isError` rather than a JSON-RPC error?
 
@@ -510,8 +516,10 @@ CI runs the same set on Linux, macOS and Windows.
 ## Security
 
 The tools never open a file or a socket. External entities are never
-dereferenced. Entity expansion and recursion are bounded.
-`#![forbid(unsafe_code)]`. The HTTP listeners exist only when asked
+dereferenced. Tool XML parsing uses `Limits::strict()`, and schemas have an 8 MiB
+source limit. XPath compilation and per-call evaluation use explicit
+budgets. The SDK and deployment must separately bound transport payloads,
+concurrent requests and sessions. `#![forbid(unsafe_code)]`. The HTTP listeners exist only when asked
 for on the command line, bind loopback by default, and do not
 authenticate — see [Transports](#transports).
 

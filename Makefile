@@ -3,11 +3,13 @@
 
 CARGO ?= cargo
 
-.PHONY: all check clippy test fmt doc docs docs-serve gate demo clean
+.PHONY: all check typecheck clippy test fmt doc docs docs-serve gate demo clean
 
-all: fmt check clippy test
+all: check
 
-check:
+check: gate
+
+typecheck:
 	$(CARGO) check --all-targets --all-features
 
 clippy:

@@ -1,8 +1,10 @@
+<!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
+
 # Security Policy
 
 ## Supported versions
 
-oxml is pre-1.0. Only the most recent `0.0.x` release receives security
+oxml-mcp is pre-1.0. Only the most recent `0.0.x` release receives security
 fixes.
 
 ## Reporting a vulnerability
@@ -16,24 +18,23 @@ You should get an acknowledgement within 72 hours.
 
 ## Threat model
 
-XML parsers have a well-known attack surface, and oxml's design
-forecloses most of it rather than mitigating it:
+Tool XML parsing uses `Limits::strict()`, schema input is capped at
+8 MiB, and XPath compilation/evaluation use explicit per-call limits.
+Internal entities may expand within core budgets. No tool automatically
+fetches XML documents, schemas or external entities over the network.
 
-**Entity expansion (XXE, billion laughs).** oxml resolves only the five
-predefined entities and numeric character references. External and
-custom entities are *not* resolved — a document declaring
-`<!ENTITY xxe SYSTEM "file:///etc/passwd">` is rejected rather than
-expanded. There is no option to enable it, so there is no way to
-configure the vulnerability back in.
+Stdio lines are capped at 16 MiB before the SDK can grow its line buffer
+beyond that limit. Streamable HTTP uses the SDK's streaming 4 MiB request
+body limit; legacy SSE uses Axum's default 2 MiB body extractor limit.
+Stdio inherits the launching process's trust boundary. HTTP and SSE have
+no application authentication and bind to loopback by default. A deployment
+exposing them beyond loopback must supply authentication, TLS, request-size,
+concurrency and session limits. Per-message limits do not bound the
+number of simultaneous requests or total process memory.
 
-**Unbounded recursion.** Deeply nested documents are parsed with
-recursion. Extremely deep input can exhaust the stack; if you parse
-untrusted documents of unbounded depth, run the parse on a thread with
-a known stack size.
-
-**Memory safety.** `#![forbid(unsafe_code)]` is enforced at compile
-time, so the class of memory-corruption bugs that has historically
-affected C XML parsers cannot occur here.
+**Memory safety.** This crate forbids unsafe Rust in its own source.
+Dependencies and runtimes have separate safety obligations. This
+does not rule out resource exhaustion, logic defects or protocol errors.
 
 ## What is not a vulnerability
 

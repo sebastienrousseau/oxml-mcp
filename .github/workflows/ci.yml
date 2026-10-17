@@ -22,6 +22,13 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  publish-helper-contract:
+    name: Publish helper contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
+      - run: python3 scripts/test-publish-dry-run.py
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -31,9 +38,9 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo test --all-features
 
@@ -42,9 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # README.md and doc/TESTING.md both say the examples run in CI.
       # Until 0.0.7 nothing ran them -- the same gap that let two of
@@ -58,13 +65,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # main
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # The README says the examples cover the public API. That claim
       # decays silently, so it is measured rather than trusted: every
@@ -80,7 +87,7 @@ jobs:
     # fails with "failed to run `rustc` to learn about target-specific
     # information", which does not name the cause.
     env:
-      RUSTUP_TOOLCHAIN: nightly
+      RUSTUP_TOOLCHAIN: nightly-2026-10-13
     strategy:
       fail-fast: false
       matrix:
@@ -88,11 +95,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
       # cargo-fuzz needs nightly for the sanitiser flags.
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-10-13
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo install cargo-fuzz --locked
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
       # Seeds are tracked; the grown corpus is not. Starting from the
       # seeds each run keeps the job reproducible rather than dependent
       # on whatever a previous run happened to discover.
@@ -161,16 +168,16 @@ jobs:
     # otherwise pin this job to the release toolchain, where
     # `cargo llvm-cov --branch` does not build.
     env:
-      RUSTUP_TOOLCHAIN: nightly
+      RUSTUP_TOOLCHAIN: nightly-2026-10-13
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-10-13
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # main
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # cargo-llvm-cov has --fail-under-lines but no branch equivalent,
       # so the floor is enforced by reading the summary. Branch
@@ -194,9 +201,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all --check
@@ -223,19 +230,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.2
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # main
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Every defect fixed in 0.0.3 was found by raising coverage, not
       # by reading the code. The floor keeps that from eroding: a new
       # branch nothing exercises fails here rather than shipping.
       - run: >
-          cargo llvm-cov --all-features --fail-under-lines 95
+          cargo llvm-cov --remap-path-prefix --all-features --fail-under-lines 95
           --ignore-filename-regex 'builds/cargo/package'
 
   msrv:
@@ -256,7 +263,7 @@ jobs:
         run: |
           V=$(grep -m1 '^rust-version' Cargo.toml | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
           echo "version=$V" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2

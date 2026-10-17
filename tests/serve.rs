@@ -52,9 +52,12 @@ async fn the_handshake_negotiates_a_current_revision() {
     assert_eq!(server_info.name, "oxml-mcp");
     assert_eq!(server_info.version, env!("CARGO_PKG_VERSION"));
     assert!(info.capabilities.tools.is_some(), "tools capability");
-    // The SDK client asks for its latest handshake revision; the server
-    // must agree to it rather than fall back.
-    assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
+    // Newer stateless revisions have no initialize handshake. A session
+    // negotiates the latest revision that still defines initialize.
+    assert_eq!(
+        info.protocol_version,
+        ProtocolVersion::LATEST_WITH_INITIALIZE
+    );
     let _ = client.cancel().await.expect("clean close");
 }
 
