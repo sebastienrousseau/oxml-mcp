@@ -6,7 +6,6 @@ rust-version = "1.89.0"
 license = "Apache-2.0 OR MIT"
 description = "Model Context Protocol server exposing oxml's XML parsing, XPath and XSD validation"
 repository = "https://github.com/sebastienrousseau/oxml-mcp"
-homepage = "https://github.com/sebastienrousseau/oxml-mcp"
 documentation = "https://docs.rs/oxml-mcp"
 readme = "README.md"
 keywords = ["xml", "xpath", "mcp", "llm", "xsd"]
