@@ -113,27 +113,7 @@ pub fn query(
         &bindings,
         &oxml::Limits::strict(),
     )
-        .map_err(|e| {
-            // The library names a Rust function, which is no use to a
-            // model. Say what it can put in the request.
-            if e.message.contains("unbound namespace prefix") {
-                let prefix =
-                    e.message.split('`').nth(1).unwrap_or("PREFIX").to_owned();
-                format!(
-                    "The XPath expression uses the namespace prefix \
-                     `{prefix}`, which is not bound. Pass it in the \
-                     `namespaces` argument, for example \
-                     {{\"{prefix}\": \"urn:example\"}}. Call `xml_inspect` \
-                     to see which namespaces the document uses."
-                )
-            } else {
-                let (line, column) = xpath_line_column(xpath, e.offset);
-                format!(
-                    "The XPath expression is invalid at line {line}, column {column}: {}",
-                    e.message
-                )
-            }
-        })?;
+    .map_err(|error| explain_xpath_error(xpath, &error))?;
     let context = oxml::xpath::EvalContext::new()
         .with_limits(oxml::xpath::EvalLimits::default());
     let value = compiled
@@ -158,6 +138,32 @@ pub fn query(
         count: nodes.len(),
         values,
     })
+}
+
+fn explain_xpath_error(xpath: &str, error: &oxml::XPathError) -> String {
+    // The library names a Rust function, which is no use to a model.
+    // Say what it can put in the request.
+    if error.message.contains("unbound namespace prefix") {
+        let prefix = error
+            .message
+            .split('`')
+            .nth(1)
+            .unwrap_or("PREFIX")
+            .to_owned();
+        format!(
+            "The XPath expression uses the namespace prefix \
+             `{prefix}`, which is not bound. Pass it in the \
+             `namespaces` argument, for example \
+             {{\"{prefix}\": \"urn:example\"}}. Call `xml_inspect` \
+             to see which namespaces the document uses."
+        )
+    } else {
+        let (line, column) = xpath_line_column(xpath, error.offset);
+        format!(
+            "The XPath expression is invalid at line {line}, column {column}: {}",
+            error.message
+        )
+    }
 }
 
 fn xpath_line_column(input: &str, offset: usize) -> (usize, usize) {
