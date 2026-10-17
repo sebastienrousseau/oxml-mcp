@@ -276,7 +276,8 @@ where
 
 async fn serve_stdio<H: ServerHandler>(handler: H) -> io::Result<()> {
     use rmcp::service::ServerInitializeError as Init;
-    let running = match handler.serve(rmcp::transport::stdio()).await {
+    let input = bounded_lines::BoundedLines::new(tokio::io::stdin());
+    let running = match handler.serve((input, tokio::io::stdout())).await {
         Ok(running) => running,
         // The client hung up, or spoke before the handshake, and there
         // is nobody left to report to: a session that never began is
@@ -363,6 +364,7 @@ where
         .await
 }
 
+mod bounded_lines;
 mod sse;
 use sse::serve_sse;
 

@@ -7,11 +7,11 @@
     "url": "https://github.com/sebastienrousseau/oxml-mcp",
     "source": "github"
   },
-  "version": "0.0.10",
+  "version": "0.0.11",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/sebastienrousseau/oxml-mcp:0.0.10",
+      "identifier": "ghcr.io/sebastienrousseau/oxml-mcp:0.0.11",
       "transport": {
         "type": "stdio"
       }
