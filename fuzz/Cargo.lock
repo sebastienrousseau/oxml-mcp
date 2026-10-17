@@ -577,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "oxml-mcp-fuzz"
-version = "0.0.0"
+version = "0.0.11"
 dependencies = [
  "libfuzzer-sys",
  "oxml-mcp",
