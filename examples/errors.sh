@@ -38,7 +38,7 @@ call "an unknown tool is a result naming the tools that exist" \
 # names the field.
 call "a missing required argument names the field" \
   '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"xml_query","arguments":{"xml":"<a/>"}}}' \
-  'missing field `xpath`'
+  "missing field \`xpath\`"
 
 call "an unknown method is method-not-found" \
   '{"jsonrpc":"2.0","id":7,"method":"nope"}' \

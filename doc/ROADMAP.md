@@ -4,19 +4,20 @@
 
 ## Where this is
 
-A Model Context Protocol server exposing four read-only tools over
-`oxml` and `xmlschema`: `xml_query`, `xml_validate`, `xml_check` and
-`xml_inspect`. It speaks MCP over stdio, streamable HTTP and the
+A Model Context Protocol server exposing five read-only tools over
+`oxml` and `xmlschema`: `xml_query`, `xml_validate`, `xml_check`,
+`xml_inspect` and `xml_format`. It speaks MCP over stdio, streamable HTTP and the
 older HTTP+SSE transport.
 
 The point is that a model can ask questions of a document far larger
 than its context without the document entering that context. A query
 returns the matched values; an inspection returns the shape.
 
-JSON parsing moved to `oxml-json` at 0.0.8, shared with `oxml-lsp`, so
-the two servers cannot disagree about what a number means.
+JSON parsing moved to `oxml-json` at 0.0.8. MCP now uses the protocol
+SDK's JSON stack; LSP continues to use `oxml-json`.
 
-Documents are parsed in full before any tool answers.
+Documents are parsed in full under the strict core profile before any
+tool answers. Each query has a fresh evaluation budget.
 
 ## The order
 
@@ -28,10 +29,9 @@ server; for those two tools it need not be.
 
 `xml_query` and `xml_validate` genuinely need the tree.
 
-**2. Position information in tool errors.** `xml_check` reports the
-line and column of a well-formedness violation. `xml_query` and
-`xml_validate` report what went wrong but not always where, and a
-model that cannot locate a fault will guess at it.
+**Implemented: position information in tool errors.** XML parse errors
+include their line and column. Invalid XPath expressions include the
+expression's line and column; validation violations name their paths.
 
 **3. A document handle.** Every call re-parses the XML it is given. A
 model that asks five questions of one document pays the parse five
@@ -41,9 +41,9 @@ is third rather than first.
 
 ## What is deliberately absent
 
-**Writing XML.** These tools read. A model that can mutate a document
-through this server is a different threat model, and the read-only
-surface is most of why this is safe to hand to one.
+**Structural XML editing.** `xml_format` serializes a parsed document,
+but no tool changes element or attribute data or persists edits. Adding
+mutation or filesystem writes would change the threat model.
 
 **Fetching documents.** The server never retrieves anything over the
 network. XML that fetches what it references is how XXE works; a

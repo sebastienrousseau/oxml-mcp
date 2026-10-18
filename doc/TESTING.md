@@ -8,7 +8,7 @@
 cargo test
 ```
 
-52 tests, covering each tool and its structured result, the
+59 tests, covering each tool and its structured result, the
 command line, and every transport: a session held with the SDK's own
 client through an in-memory pipe, the binary driven over stdio, and
 the binary driven over both HTTP transports by a small hand-written
@@ -56,7 +56,7 @@ every request in the README fails CI when it stops being true.
 
 | Script | Covers |
 |---|---|
-| `session.sh` | The handshake in both current revisions, `server/discover`, `tools/list` with schemas and annotations, all four tools, `count()`, an escaped surrogate pair |
+| `session.sh` | The handshake in both current revisions, `server/discover`, `tools/list` with schemas and annotations, all five tools, `count()`, an escaped surrogate pair |
 | `errors.sh` | Malformed document, invalid expression, schema violation, unknown tool, missing argument, unknown method, a line that is not JSON, an external entity |
 
 Writing them once corrected a claim the other way: an **unknown
@@ -72,7 +72,7 @@ exist.
 cargo +nightly fuzz run tools
 ```
 
-`tools` feeds arbitrary documents, expressions and schemas to the four
+`tools` feeds arbitrary documents, expressions and schemas to the tool
 functions, which is the surface still written here now that the
 JSON-RPC layer is the SDK's. One input, split on NUL bytes, exercises
 every tool.
@@ -88,8 +88,10 @@ because knowing only that something broke is not much use.
 
 ## Coverage
 
-Line coverage is gated in CI at a 95% floor. **Branch coverage is
-86.6%**, gated at 80.
+Line coverage is gated in CI at a 95% floor; branch coverage is gated
+at 80%. The previously recorded 86.6% branch figure is a historical
+snapshot without an attached source head, not a measurement of this
+release candidate. Use the branch job for its exact-head result.
 
 Branch coverage needs a nightly toolchain: `cargo llvm-cov --branch`
 does not build on the version this project pins. It was recorded as
