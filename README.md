@@ -44,7 +44,7 @@
 - [Protocol](#protocol) — MCP `2025-11-25` and `2026-07-28`, and the two kinds of failure
 - [Errors](#errors) — the two kinds, and which is which
 - [Design](#design) — why five tools, and why documents are strings
-- [Capabilities in 0.0.12](#capabilities-in-0012) — release inventory
+- [Capabilities in 0.0.13](#capabilities-in-0013) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — how this compares to the alternatives
 - [Benchmarks](#benchmarks) — latency per request, measured in pairs
 
@@ -80,7 +80,7 @@ in a document it can see will approximate. `xml_query` with
 ## Install
 
 ```bash
-cargo install oxml-mcp --version 0.0.12 --locked
+cargo install oxml-mcp --version 0.0.13 --locked
 ```
 
 Without a Rust toolchain, the same binary ships as an image on GHCR
@@ -88,7 +88,7 @@ Without a Rust toolchain, the same binary ships as an image on GHCR
 points at it):
 
 ```bash
-docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.12
+docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.13
 ```
 
 ## Transports
@@ -335,7 +335,7 @@ are a protocol project, and keeping a hand-written one honest against
 them is not where the value of an XML server lies. What is this
 crate's own is the five functions and the text a model reads.
 
-## Capabilities in 0.0.12
+## Capabilities in 0.0.13
 
 - Five tools: query, inspect, check, validate, format
 - XPath 1.0: ten axes, 25 functions, all four value types

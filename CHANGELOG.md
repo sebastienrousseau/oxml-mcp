@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.13] - 2026-10-31
+
+### Security
+
+- **Resolve `RUSTSEC-2026-0386` in `fuzz/Cargo.lock`.** Upgrade `tokio` from
+  `1.53.2` to `1.54.1` in the fuzz workspace lockfile and enforce
+  `cargo audit --deny warnings` across both `Cargo.lock` and
+  `fuzz/Cargo.lock` in `.github/workflows/security.yml`.
+
 ## [0.0.12] - 2026-10-31
 
 ### Changed

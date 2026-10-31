@@ -562,7 +562,7 @@ checksum = "099a65b3139999c480e6e8973c2c7ddba41be2acda6fc9375a5569f072d7aa93"
 
 [[package]]
 name = "oxml-mcp"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "axum",
  "futures",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "oxml-mcp-fuzz"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "libfuzzer-sys",
  "oxml-mcp",
@@ -932,9 +932,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "bytes",
  "libc",
