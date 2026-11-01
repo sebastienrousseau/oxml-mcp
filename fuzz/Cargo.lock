@@ -556,13 +556,13 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "oxml"
-version = "0.0.12"
+version = "0.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "099a65b3139999c480e6e8973c2c7ddba41be2acda6fc9375a5569f072d7aa93"
+checksum = "396a52ae51fc990e11a3333ec3ed6e218cfc9135595ff687e048d4643a48d1f1"
 
 [[package]]
 name = "oxml-mcp"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "axum",
  "futures",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "oxml-mcp-fuzz"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "libfuzzer-sys",
  "oxml-mcp",
@@ -1178,9 +1178,9 @@ dependencies = [
 
 [[package]]
 name = "xmlschema"
-version = "0.0.13"
+version = "0.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd81e340d5e72e6f5b4cdde761c330a8cd18199fe6a667ad905708e2921229a6"
+checksum = "6484575f41d368f0b14ff14898915418ba6c977af90b10a030b20d2a7b71853c"
 dependencies = [
  "oxml",
 ]

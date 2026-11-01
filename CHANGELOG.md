@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.15] - 2026-11-01
+
+### Changed
+
+- **Upgrade to `oxml` 0.0.13 and `xmlschema` 0.0.14.** Advance exact core
+  parser and XSD validator pins to `oxml = "=0.0.13"` and
+  `xmlschema = "=0.0.14"`, and align package, fuzz harness, and MCP registry
+  descriptors (`server.json`, `glama.json`) at `0.0.15`.
+
 ## [0.0.14] - 2026-11-01
 
 ### Changed
