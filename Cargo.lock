@@ -534,7 +534,7 @@ checksum = "396a52ae51fc990e11a3333ec3ed6e218cfc9135595ff687e048d4643a48d1f1"
 
 [[package]]
 name = "oxml-mcp"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "axum",
  "futures",

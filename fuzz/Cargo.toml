@@ -2,7 +2,7 @@
 
 [package]
 name = "oxml-mcp-fuzz"
-version = "0.0.15"
+version = "0.0.16"
 publish = false
 license = "Apache-2.0 OR MIT"
 edition = "2024"
