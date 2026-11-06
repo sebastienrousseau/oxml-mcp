@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Check `Host`, `Origin` and `Content-Type` on the HTTP transports.**
+  The HTTP+SSE transport served any request that reached the socket,
+  so a page that rebound its own name to `127.0.0.1` could open `/sse`
+  and post JSON-RPC to `/messages/`. Both SSE routes now refuse a
+  foreign `Host` or a non-local `Origin` (`403`), and the message
+  route refuses anything but `application/json` (`415`). Streamable
+  HTTP now refuses a non-local `Origin` too.
+- **Cap live sessions.** Both HTTP transports hold at most
+  `--max-sessions` sessions at once (64 by default). SSE answers a
+  stream past the limit with `503`; streamable HTTP refuses to create
+  the session.
+
 ## [0.0.15] - 2026-11-01
 
 ### Changed

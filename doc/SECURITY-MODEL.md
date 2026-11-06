@@ -42,10 +42,23 @@ could be killed by anything able to write a byte to it.
 `--transport streamable-http` and `--transport sse` open a TCP
 listener. It binds `127.0.0.1` unless `--host` says otherwise, and it
 does not authenticate: a routable deployment belongs behind a gateway
-that does. The SDK refuses a `Host` header it does not expect, which
-stops a page in a browser from reaching a local server through DNS
-rebinding; binding every interface turns that check off, because
-there is then no name to check against.
+that does.
+
+A page in a browser can reach a server on the loopback interface by
+rebinding its own name to `127.0.0.1`; the browser then sends that
+name in `Host` and the page's own origin in `Origin`. Both HTTP
+transports therefore refuse, with `403`, a `Host` that is not a
+loopback name or the bound one, and an `Origin` whose host is not
+local. Binding every interface turns the `Host` check off, because
+there is then no name to check against; the `Origin` check stays. The
+SSE message endpoint refuses anything but `application/json` with
+`415`, which a page cannot send cross-origin without a preflight the
+server never answers. Streamable HTTP gets the same `Host` and
+`Origin` lists through the SDK's configuration.
+
+Sessions are bounded: at most `--max-sessions` (64 by default) live at
+once on either HTTP transport, so a client cannot open them faster
+than they expire. A closed session frees its slot.
 
 ## What the server cannot do
 
