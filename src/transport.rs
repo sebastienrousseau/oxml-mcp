@@ -34,7 +34,6 @@ use std::io;
 use std::process::ExitCode;
 
 use axum::Router;
-use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService,
 };
@@ -46,6 +45,9 @@ use tokio_util::sync::CancellationToken;
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// The port the HTTP transports listen on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 8000;
+/// How many sessions an HTTP transport holds at once unless told
+/// otherwise.
+pub const DEFAULT_MAX_SESSIONS: usize = 64;
 /// The streamable HTTP endpoint.
 pub const STREAMABLE_HTTP_PATH: &str = "/mcp";
 /// Where the legacy transport's event stream is opened.
@@ -85,6 +87,9 @@ pub struct Options {
     /// The port the HTTP transports bind. Zero asks the system for a
     /// free one, which is what a test wants.
     pub port: u16,
+    /// How many sessions an HTTP transport holds at once; past it, a
+    /// new one is refused.
+    pub max_sessions: usize,
 }
 
 impl Default for Options {
@@ -93,6 +98,7 @@ impl Default for Options {
             transport: Transport::Stdio,
             host: DEFAULT_HOST.to_owned(),
             port: DEFAULT_PORT,
+            max_sessions: DEFAULT_MAX_SESSIONS,
         }
     }
 }
@@ -113,7 +119,7 @@ pub enum Command {
 pub fn usage(name: &str) -> String {
     format!(
         "Usage: {name} [--transport <stdio|streamable-http|sse>] \
-         [--host <address>] [--port <number>]\n\
+         [--host <address>] [--port <number>] [--max-sessions <n>]\n\
          \n\
          Options:\n\
          \x20 --transport <name>  stdio (default), streamable-http, or sse\n\
@@ -121,6 +127,8 @@ pub fn usage(name: &str) -> String {
          (default {DEFAULT_HOST})\n\
          \x20 --port <number>     port for the HTTP transports \
          (default {DEFAULT_PORT})\n\
+         \x20 --max-sessions <n>  sessions an HTTP transport holds at once \
+         (default {DEFAULT_MAX_SESSIONS})\n\
          \x20 --version           print the version and exit\n\
          \x20 --help              print this text and exit\n\
          \n\
@@ -177,7 +185,7 @@ fn apply_flag(
     inline: Option<String>,
     rest: &mut dyn Iterator<Item = String>,
 ) -> Result<(), String> {
-    if !matches!(flag, "--transport" | "--host" | "--port") {
+    if !matches!(flag, "--transport" | "--host" | "--port" | "--max-sessions") {
         return Err(format!("unknown argument `{flag}`"));
     }
     let value = inline
@@ -186,6 +194,9 @@ fn apply_flag(
     match flag {
         "--transport" => options.transport = parse_transport(&value)?,
         "--port" => options.port = parse_port(&value)?,
+        "--max-sessions" => {
+            options.max_sessions = parse_max_sessions(&value)?;
+        }
         _ => options.host = value,
     }
     Ok(())
@@ -197,6 +208,13 @@ fn parse_transport(name: &str) -> Result<Transport, String> {
             "unknown transport `{name}`; choose stdio, streamable-http or sse"
         )
     })
+}
+
+fn parse_max_sessions(text: &str) -> Result<usize, String> {
+    text.parse()
+        .ok()
+        .filter(|n| *n > 0)
+        .ok_or_else(|| format!("`{text}` is not a positive number of sessions"))
 }
 
 fn parse_port(text: &str) -> Result<u16, String> {
@@ -269,7 +287,7 @@ where
         Transport::Sse => {
             let listener = bind(options).await?;
             announce(&listener, SSE_PATH)?;
-            serve_sse(listener, factory).await
+            serve_sse(listener, options, factory).await
         }
     }
 }
@@ -345,14 +363,16 @@ where
     // an operator who binds another interface has chosen to be
     // reachable by it, so that name is allowed too. Binding every
     // interface means there is no name to check against.
-    if options.host == "0.0.0.0" || options.host == "::" {
-        config = config.disable_allowed_hosts();
-    } else if !config.allowed_hosts.contains(&options.host) {
-        config.allowed_hosts.push(options.host.clone());
+    // A browser page also carries its own origin; only a local one is
+    // served. A client that is not a browser sends no `Origin`.
+    config = match guard::allowed_hosts(&options.host) {
+        Some(hosts) => config.with_allowed_hosts(hosts),
+        None => config.disable_allowed_hosts(),
     }
+    .with_allowed_origins(guard::allowed_origins(&options.host));
     let service = StreamableHttpService::new(
         move || Ok(factory()),
-        LocalSessionManager::default().into(),
+        CappedSessions::new(options.max_sessions).into(),
         config,
     );
     let router = Router::new().nest_service(STREAMABLE_HTTP_PATH, service);
@@ -365,118 +385,11 @@ where
 }
 
 mod bounded_lines;
+mod guard;
+mod sessions;
 mod sse;
+use sessions::CappedSessions;
 use sse::serve_sse;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn no_arguments_means_stdio() {
-        assert_eq!(
-            parse(Vec::<String>::new()),
-            Ok(Command::Serve(Options::default()))
-        );
-    }
-
-    #[test]
-    fn the_http_transports_take_host_and_port() {
-        let want = Options {
-            transport: Transport::StreamableHttp,
-            host: "0.0.0.0".to_owned(),
-            port: 9000,
-        };
-        assert_eq!(
-            parse([
-                "--transport",
-                "streamable-http",
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "9000"
-            ]),
-            Ok(Command::Serve(want.clone()))
-        );
-        // `--flag=value` is the same as `--flag value`.
-        assert_eq!(
-            parse([
-                "--transport=streamable-http",
-                "--host=0.0.0.0",
-                "--port=9000"
-            ]),
-            Ok(Command::Serve(want))
-        );
-        assert_eq!(
-            parse(["--transport", "sse"]),
-            Ok(Command::Serve(Options {
-                transport: Transport::Sse,
-                ..Options::default()
-            }))
-        );
-    }
-
-    #[test]
-    fn help_and_version_win_over_everything_else() {
-        assert_eq!(parse(["--help"]), Ok(Command::Help));
-        assert_eq!(parse(["-h"]), Ok(Command::Help));
-        assert_eq!(parse(["--version"]), Ok(Command::Version));
-        assert_eq!(parse(["--transport", "sse", "-V"]), Ok(Command::Version));
-    }
-
-    #[test]
-    fn bad_arguments_are_named() {
-        assert!(
-            parse(["--transport", "carrier-pigeon"])
-                .is_err_and(|e| e.contains("carrier-pigeon"))
-        );
-        assert!(
-            parse(["--port", "eighty"]).is_err_and(|e| e.contains("eighty"))
-        );
-        assert!(parse(["--port", "70000"]).is_err_and(|e| e.contains("70000")));
-        assert!(parse(["--port"]).is_err_and(|e| e.contains("needs a value")));
-        assert!(parse(["--bogus"]).is_err_and(|e| e.contains("--bogus")));
-    }
-
-    #[test]
-    fn flags_split_on_the_first_equals_and_unknown_ones_stop_parsing() {
-        // An unknown flag fails before anything after it is read, even a
-        // flag that would otherwise win.
-        assert!(
-            parse(["--bogus", "--help"]).is_err_and(|e| e.contains("--bogus"))
-        );
-        assert!(parse(["--bogus=1"]).is_err_and(|e| e.contains("`--bogus`")));
-        // Only the first `=` separates the value.
-        match parse(["--transport=sse", "--host=a=b", "--port=0"]) {
-            Ok(Command::Serve(options)) => {
-                assert_eq!(options.transport, Transport::Sse);
-                assert_eq!(options.host, "a=b");
-                assert_eq!(options.port, 0);
-            }
-            other => panic!("expected serve, got {other:?}"),
-        }
-        // A value-taking flag reads the next argument as its value.
-        assert!(parse(["--host", "--help"]).is_ok_and(|c| matches!(
-            c,
-            Command::Serve(Options { ref host, .. }) if host == "--help"
-        )));
-    }
-
-    #[test]
-    fn the_usage_text_names_every_flag_and_path() {
-        let text = usage("any-mcp");
-        for needle in [
-            "any-mcp",
-            "--transport",
-            "--host",
-            "--port",
-            "--version",
-            "--help",
-            STREAMABLE_HTTP_PATH,
-            SSE_PATH,
-            MESSAGE_PATH,
-        ] {
-            assert!(text.contains(needle), "usage lacks {needle}:\n{text}");
-        }
-    }
-}
+mod tests;

@@ -8,7 +8,7 @@
 cargo test
 ```
 
-59 tests, covering each tool and its structured result, the
+74 tests, covering each tool and its structured result, the
 command line, and every transport: a session held with the SDK's own
 client through an in-memory pipe, the binary driven over stdio, and
 the binary driven over both HTTP transports by a small hand-written
@@ -36,8 +36,11 @@ bodies and server-sent events by hand. A client library would have
 hidden the details this file exists to check: the `Mcp-Session-Id`
 on an `initialize` reply, the priming event that carries no data, the
 `405` a stateless `GET` gets, the `-32020` a mirrored routing header
-draws when it disagrees with the body, and the `endpoint` event that
-opens the older SSE transport.
+draws when it disagrees with the body, the `endpoint` event that
+opens the older SSE transport, the `403` a foreign `Host` or `Origin`
+draws on either transport, the `415` a non-JSON post to the SSE
+endpoint draws, and the session a client cannot open past
+`--max-sessions`.
 
 Two of its expectations were wrong when written and the server was
 right: the `2026-07-28` revision requires `clientCapabilities` in

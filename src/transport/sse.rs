@@ -18,7 +18,7 @@ use std::task::{Context, Poll};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -30,7 +30,8 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use super::{MESSAGE_PATH, SSE_PATH, interrupted};
+use super::guard::{Guard, Refusal, require_json};
+use super::{MESSAGE_PATH, Options, SSE_PATH, interrupted};
 
 /// One session's inbox: the channel its posted messages go down.
 type Inbox = mpsc::Sender<ClientJsonRpcMessage>;
@@ -44,6 +45,10 @@ struct SseState<H> {
     sessions: Sessions,
     /// Cancelled when the server stops, ending every session.
     shutdown: CancellationToken,
+    /// The `Host` and `Origin` checks both routes apply.
+    guard: Guard,
+    /// How many sessions may be open at once.
+    max_sessions: usize,
 }
 
 /// `?sessionId=...` on the message endpoint.
@@ -55,6 +60,7 @@ struct SessionQuery {
 
 pub(super) async fn serve_sse<H, F>(
     listener: TcpListener,
+    options: &Options,
     factory: F,
 ) -> io::Result<()>
 where
@@ -66,6 +72,8 @@ where
         factory: Box::new(factory),
         sessions: Sessions::default(),
         shutdown: shutdown.clone(),
+        guard: Guard::for_bind_host(&options.host),
+        max_sessions: options.max_sessions,
     });
     let router = Router::new()
         .route(SSE_PATH, get(open_stream::<H>))
@@ -89,16 +97,18 @@ where
 /// `message` event carrying one JSON-RPC message.
 async fn open_stream<H: ServerHandler>(
     State(state): State<Arc<SseState<H>>>,
+    headers: HeaderMap,
 ) -> Response {
+    if let Err(refused) = state.guard.check(&headers) {
+        return refused.into_response();
+    }
     let id = uuid::Uuid::new_v4().simple().to_string();
     let (inbox, from_client) = mpsc::channel::<ClientJsonRpcMessage>(32);
     let (to_client, outbox) = mpsc::channel::<ServerJsonRpcMessage>(32);
     let ct = state.shutdown.child_token();
-    let _ = state
-        .sessions
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(id.clone(), inbox);
+    if let Err(full) = admit(&state.sessions, state.max_sessions, &id, inbox) {
+        return full.into_response();
+    }
 
     let handler = (state.factory)();
     let session_ct = ct.clone();
@@ -135,6 +145,28 @@ async fn open_stream<H: ServerHandler>(
         .into_response()
 }
 
+/// Record a new session's inbox, unless `max` sessions are already
+/// open, in which case the reply is `503`.
+fn admit(
+    sessions: &Sessions,
+    max: usize,
+    id: &str,
+    inbox: Inbox,
+) -> Result<(), Refusal> {
+    let mut sessions = sessions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if sessions.len() >= max {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the server holds its session limit; close a session or retry \
+             later",
+        ));
+    }
+    let _ = sessions.insert(id.to_owned(), inbox);
+    Ok(())
+}
+
 /// `POST /messages/?sessionId=...`: one JSON-RPC message in, `202` out.
 ///
 /// The reply, if any, goes down the session's event stream, which is
@@ -143,8 +175,16 @@ async fn open_stream<H: ServerHandler>(
 async fn post_message<H: ServerHandler>(
     State(state): State<Arc<SseState<H>>>,
     Query(query): Query<SessionQuery>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(refused) = state
+        .guard
+        .check(&headers)
+        .and_then(|()| require_json(&headers))
+    {
+        return refused.into_response();
+    }
     let message: ClientJsonRpcMessage = match serde_json::from_slice(&body) {
         Ok(message) => message,
         Err(e) => {
@@ -223,6 +263,8 @@ mod tests {
             factory: Box::new(|| ()),
             sessions: Sessions::default(),
             shutdown: CancellationToken::new(),
+            guard: Guard::for_bind_host("127.0.0.1"),
+            max_sessions: 1,
         };
         assert_eq!(format!("{state:?}"), "SseState { .. }");
     }

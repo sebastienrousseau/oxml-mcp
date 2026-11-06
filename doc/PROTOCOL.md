@@ -15,6 +15,15 @@ the framing, the handshake, the sessions and the revisions.
 | `oxml-mcp --transport sse` | HTTP+SSE, the older transport | `/sse` and `/messages/` on `127.0.0.1:8000` | `2024-11-05` |
 
 `--host` and `--port` move the HTTP listeners. Neither authenticates.
+`--max-sessions` (default 64) caps how many sessions an HTTP transport
+holds at once: past it, SSE answers a new stream with `503` and
+streamable HTTP refuses a new `initialize` with an error naming the
+limit. Stateless `2026-07-28` requests open no session and are not
+counted.
+
+Both HTTP transports refuse a `Host` the server does not answer to and
+a non-local `Origin` with `403`. The SSE message endpoint also refuses
+any `Content-Type` but `application/json` with `415`.
 
 ## Two current revisions, one endpoint
 
