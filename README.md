@@ -44,7 +44,7 @@
 - [Protocol](#protocol) — MCP `2025-11-25` and `2026-07-28`, and the two kinds of failure
 - [Errors](#errors) — the two kinds, and which is which
 - [Design](#design) — why five tools, and why documents are strings
-- [Capabilities in 0.0.15](#capabilities-in-0015) — release inventory
+- [Capabilities in 0.0.16](#capabilities-in-0016) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — how this compares to the alternatives
 - [Benchmarks](#benchmarks) — latency per request, measured in pairs
 
@@ -80,7 +80,7 @@ in a document it can see will approximate. `xml_query` with
 ## Install
 
 ```bash
-cargo install oxml-mcp --version 0.0.15 --locked
+cargo install oxml-mcp --version 0.0.16 --locked
 ```
 
 Without a Rust toolchain, the same binary ships as an image on GHCR
@@ -88,7 +88,7 @@ Without a Rust toolchain, the same binary ships as an image on GHCR
 points at it):
 
 ```bash
-docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.15
+docker run --rm -i ghcr.io/sebastienrousseau/oxml-mcp:0.0.16
 ```
 
 ## Transports
@@ -112,8 +112,11 @@ that still expect an `endpoint` event and a message URL.
 
 The HTTP transports bind the loopback interface unless `--host` says
 otherwise, and they do not authenticate. Put the server behind a
-gateway you trust before binding a routable address. `--version` and
-`--help` do what they say.
+gateway you trust before binding a routable address. They refuse a
+foreign `Host` or a non-local `Origin` with `403`, and `--max-sessions`
+(64 by default) caps how many sessions they hold at once; see
+[doc/PROTOCOL.md](doc/PROTOCOL.md). `--version` and `--help` do what
+they say.
 
 ## Quick Start
 
@@ -335,7 +338,7 @@ are a protocol project, and keeping a hand-written one honest against
 them is not where the value of an XML server lies. What is this
 crate's own is the five functions and the text a model reads.
 
-## Capabilities in 0.0.15
+## Capabilities in 0.0.16
 
 - Five tools: query, inspect, check, validate, format
 - XPath 1.0: ten axes, 25 functions, all four value types
@@ -343,6 +346,8 @@ crate's own is the five functions and the text a model reads.
 - XML formatting and minification (`xml_format`)
 - JSON-RPC 2.0 over stdio, MCP `2024-11-05`, `2025-11-25`, and `2026-07-28`
 - Streaming JSON-RPC responses over streamable HTTP and SSE
+- `Host` and `Origin` checks on both HTTP transports, and a
+  `--max-sessions` cap on live sessions
 - Escaped surrogate pairs in JSON input, so a document containing an
   emoji works from a Python client
 - No filesystem access, no network access
